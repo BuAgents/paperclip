@@ -339,7 +339,11 @@ export async function reapSetupTokenLeases(
   let failed = 0;
   for (const record of records) {
     try {
-      await deps.leases.releaseById(record.leaseId);
+      // A session that never acquired a sandbox lease has no leaseId to
+      // release (toCleanupRecord maps a null providerLeaseId to ""); calling
+      // releaseById("") reaches the database as an empty-string uuid lookup
+      // and fails every sweep forever instead of ever clearing the row.
+      if (record.leaseId) await deps.leases.releaseById(record.leaseId);
       await deps.store.remove({
         sessionId: record.sessionId,
         companyId: record.companyId,
