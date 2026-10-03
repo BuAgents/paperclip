@@ -10,7 +10,7 @@ import {
   renderLaunchdPlist,
   renderSystemdUnit,
 } from "../services/service-manager.js";
-import { resolveRestartExpectedVersion, withHotRestartLock } from "../commands/service.js";
+import { isHealthyAtExpectedVersion, resolveRestartExpectedVersion, withHotRestartLock } from "../commands/service.js";
 import type { PaperclipConfig } from "../config/schema.js";
 import { buildLocalHealthUrl } from "../utils/health-url.js";
 
@@ -77,6 +77,19 @@ describe("service health doctor checks", () => {
     expect(resolveRestartExpectedVersion(null)).toBeNull();
     expect(resolveRestartExpectedVersion(undefined)).toBeNull();
     expect(resolveRestartExpectedVersion("1.2.3")).toBe("1.2.3");
+  });
+
+  // bu-fork: an "authenticated" (private) deployment redacts serverVersion
+  // from this CLI's own unauthenticated loopback probe, so a withheld
+  // version must not block the restart from succeeding (hit live:
+  // `paperclipai update` timed out and rolled back every time on such an
+  // instance, even once the new version was already healthy).
+  it("accepts a withheld (null) server version as healthy, but not an explicit mismatch", () => {
+    expect(isHealthyAtExpectedVersion({ ok: true, serverVersion: null }, "2026.1001.0")).toBe(true);
+    expect(isHealthyAtExpectedVersion({ ok: true, serverVersion: "2026.1001.0" }, "2026.1001.0")).toBe(true);
+    expect(isHealthyAtExpectedVersion({ ok: true, serverVersion: "2026.916.1" }, "2026.1001.0")).toBe(false);
+    expect(isHealthyAtExpectedVersion({ ok: false, serverVersion: null }, "2026.1001.0")).toBe(false);
+    expect(isHealthyAtExpectedVersion({ ok: true, serverVersion: null }, null)).toBe(true);
   });
 
   it("serializes concurrent restarts for the same instance", async () => {

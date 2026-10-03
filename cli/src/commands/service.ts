@@ -40,12 +40,24 @@ async function probeHealth(instanceId: string): Promise<HealthResult> {
   }
 }
 
+// bu-fork: an "authenticated" (private) deployment's /api/health redacts
+// serverVersion from any unauthenticated caller (shouldExposeFullHealthDetails
+// in server/src/routes/health.ts) -- which is exactly how this CLI's own
+// loopback probe calls it. Requiring an exact version match made every
+// restart on such an instance time out here after 60s and roll back, no
+// matter how healthy the new version actually was. A reported wrong version
+// is still a real mismatch; a withheld (null) version is not evidence of
+// anything and must not block the restart from succeeding.
+export function isHealthyAtExpectedVersion(health: HealthResult, expectedVersion: string | null): boolean {
+  return health.ok && (!expectedVersion || health.serverVersion === expectedVersion || health.serverVersion === null);
+}
+
 async function waitForHealth(instanceId: string, expectedVersion: string | null, timeoutMs = 60_000): Promise<HealthResult> {
   const deadline = Date.now() + timeoutMs;
   let last: HealthResult = { ok: false, serverVersion: null };
   while (Date.now() < deadline) {
     last = await probeHealth(instanceId);
-    if (last.ok && (!expectedVersion || last.serverVersion === expectedVersion)) return last;
+    if (isHealthyAtExpectedVersion(last, expectedVersion)) return last;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error(`Paperclip service did not become healthy${expectedVersion ? ` at version ${expectedVersion}` : ""}: ${last.error ?? `reported ${last.serverVersion ?? "no version"}`}`);
