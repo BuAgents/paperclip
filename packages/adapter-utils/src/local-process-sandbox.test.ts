@@ -277,6 +277,29 @@ describe("local process sandbox", () => {
     }
   });
 
+  it.runIf(process.platform === "linux")("mirrors host root symlinks instead of mounting over them", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-fs-sandbox-root-links-"));
+    cleanup.push(workspace);
+    const target = await buildLocalProcessSandboxSpawnTarget({
+      executable: process.execPath,
+      args: [],
+      cwd: workspace,
+      options: { workspaceDir: workspace, filesystemScope: "workspace" },
+    });
+    await target.cleanup?.();
+    for (const rootPath of ["/bin", "/sbin", "/lib", "/lib64"]) {
+      const link = await fs.readlink(rootPath).catch(() => null);
+      const symlinkAt = target.args.findIndex((arg, index) => arg === "--symlink" && target.args[index + 2] === rootPath);
+      const bindAt = target.args.findIndex((arg, index) => arg === "--ro-bind" && target.args[index + 1] === rootPath);
+      if (link === null) {
+        expect(symlinkAt).toBe(-1);
+      } else {
+        expect(target.args[symlinkAt + 1]).toBe(link);
+        expect(bindAt).toBe(-1);
+      }
+    }
+  });
+
   it("fails clearly when Bubblewrap is unavailable", async () => {
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-fs-sandbox-missing-"));
     cleanup.push(workspace);

@@ -77,6 +77,13 @@ Open items for `splitpierre/paperclip` (`bu/main`). Plans for larger items live 
         `acpx.tool_call` and `"step_type":"tool"`.
 
       Existing stuck tasks resume with a fresh board comment after deploy.
+- [x] 2026-10-30: **Filesystem sandbox never started on merged-/usr hosts.** `filesystemScope: "workspace"`
+      always created `/bin`, `/sbin`, `/lib` and `/lib64` as symlinks, then bind-mounted the same paths over
+      them before `/usr` existed, so bwrap died with `Can't bind mount /oldroot/usr/bin on /newroot/bin`
+      (found on Harvey's first run, BUD-641). `local-process-sandbox.ts` now mirrors the host: a symlink stays
+      a symlink, a real directory gets bound. Host setup, not tracked in this repo: Ubuntu 24.04 also needs
+      `/etc/apparmor.d/bwrap` allowing `userns` for `/usr/bin/bwrap`, or bwrap fails on the uid map.
+      Run the real-sandbox tests with `PAPERCLIP_TEST_BWRAP=/usr/bin/bwrap` (a path, not a flag).
 - [ ] **DB connection leak: `listPendingFinalizeBlockerIssueIds` (`server/src/services/issues.ts:2367`).**
       2026-09-27: 10 connections stuck `idle in transaction` for 38+ min, all mid the exact same
       `workspace_operations` query (Postgres state `ClientRead` — it already answered; the app just never

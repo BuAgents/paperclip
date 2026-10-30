@@ -66,6 +66,8 @@ const SYSTEM_READ_PATHS = [
   "/etc/gitconfig",
 ] as const;
 
+const ROOT_USR_PATHS = ["/bin", "/sbin", "/lib", "/lib64"] as const;
+
 const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"] as const;
 const SANDBOX_PROXY_PORT = 31_337;
 const UNIX_SOCKET_PATH_MAX_BYTES = 107;
@@ -386,14 +388,18 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
 
   if (filesystemScope === "workspace") {
     args.push("--tmpfs", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp");
-    args.push(
-      "--symlink", "usr/bin", "/bin",
-      "--symlink", "usr/sbin", "/sbin",
-      "--symlink", "usr/lib", "/lib",
-      "--symlink", "usr/lib64", "/lib64",
-    );
     const created = new Set<string>(["/", "/proc", "/dev", "/tmp"]);
     const mounted = new Set<string>();
+    // bu-fork: mirror the host. On merged-/usr systems these are symlinks, and
+    // bind-mounting over them before /usr exists kills bwrap at startup; on
+    // others they are real directories and SYSTEM_READ_PATHS binds them.
+    for (const rootPath of ROOT_USR_PATHS) {
+      const target = await fs.readlink(rootPath).catch(() => null);
+      if (target === null) continue;
+      args.push("--symlink", target, rootPath);
+      created.add(rootPath);
+      mounted.add(rootPath);
+    }
     const mount = async (source: string, access: LocalProcessSandboxAccess) => {
       const normalized = normalizeAbsolutePath(source, "Sandbox path");
       if (mounted.has(normalized) || !(await pathExists(normalized))) return;
