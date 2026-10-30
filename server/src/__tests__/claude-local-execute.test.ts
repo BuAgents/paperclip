@@ -432,6 +432,43 @@ describe("claude execute", () => {
     }
   });
 
+  it("loads skills as a plugin only for managed AI connections, which ignore --add-dir skills", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-plugin-dir-"));
+    const { workspace, commandPath, capturePath, restore } = await setupExecuteEnv(root);
+    try {
+      const run = async (runId: string, extra: Record<string, unknown>) => {
+        await execute({
+          runId,
+          agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+          runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+          config: {
+            engine: "cli",
+            command: commandPath,
+            cwd: workspace,
+            env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath, CLAUDE_CONFIG_DIR: path.join(root, "claude-config") },
+            ...extra,
+          },
+          context: {},
+          onLog: async () => {},
+        });
+        return JSON.parse(await fs.readFile(capturePath, "utf8"));
+      };
+
+      const legacy = await run("run-legacy", {});
+      const managed = await run("run-managed", { managedAiConnection: { identity: "account-1:generation-1" } });
+
+      expect(legacy.argv).not.toContain("--plugin-dir");
+      expect(legacy.argv).not.toContain("--setting-sources");
+      expect(managed.argv[managed.argv.indexOf("--setting-sources") + 1]).toBe("user");
+      expect(managed.argv[managed.argv.indexOf("--plugin-dir") + 1]).toBe(managed.addDir);
+      const manifest = JSON.parse(await fs.readFile(path.join(managed.addDir, ".claude-plugin", "plugin.json"), "utf8"));
+      expect(manifest).toMatchObject({ name: "paperclip", skills: "./.claude/skills" });
+    } finally {
+      restore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   /**
    * Regression tests for https://github.com/paperclipai/paperclip/issues/2848
    *

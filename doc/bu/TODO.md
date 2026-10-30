@@ -84,6 +84,13 @@ Open items for `splitpierre/paperclip` (`bu/main`). Plans for larger items live 
       a symlink, a real directory gets bound. Host setup, not tracked in this repo: Ubuntu 24.04 also needs
       `/etc/apparmor.d/bwrap` allowing `userns` for `/usr/bin/bwrap`, or bwrap fails on the uid map.
       Run the real-sandbox tests with `PAPERCLIP_TEST_BWRAP=/usr/bin/bwrap` (a path, not a flag).
+- [x] 2026-10-30: **Managed Claude agents could not load any skill.** Managed AI connections run with
+      `--setting-sources user` (keeps a repo's project settings away from managed credentials), which also
+      makes Claude ignore `.claude/skills` under `--add-dir`, so the `Skill` tool answered "Unknown skill" for
+      everything. `prepareClaudePromptBundle` now makes the bundle a plugin and managed runs pass `--plugin-dir`;
+      that loads skills without enabling project settings. Skills appear as `paperclip:<runtime-name>`.
+      Sandboxed runs also mount each skill's source read-only, since the bundle's skills are symlinks.
+      Not covered: the ACP engine, which no BUD agent uses (all `engine: "cli"`).
 - [ ] **DB connection leak: `listPendingFinalizeBlockerIssueIds` (`server/src/services/issues.ts:2367`).**
       2026-09-27: 10 connections stuck `idle in transaction` for 38+ min, all mid the exact same
       `workspace_operations` query (Postgres state `ClientRead` — it already answered; the app just never
