@@ -15,7 +15,9 @@ if [ -d "$backup/files" ]; then
 fi
 [ -f "$backup/new-files.txt" ] && while read -r f; do rm -f "$f"; done < "$backup/new-files.txt"
 if [ -d "$backup/ui-dist" ]; then
-  UI_DIST="$HOME/.paperclip/cli/installs/npm/2026.916.1/node_modules/@paperclipai/server/ui-dist"
+  # overlay-deploy.sh records where it took the backup from; older backups fall back to the base release.
+  if [ -f "$backup/ui-dist.path" ]; then UI_DIST="$(cat "$backup/ui-dist.path")"
+  else UI_DIST="$HOME/.paperclip/cli/installs/npm/2026.1001.0/node_modules/@paperclipai/server/ui-dist"; fi
   rm -rf "$UI_DIST" && cp -a "$backup/ui-dist" "$UI_DIST"
 fi
 systemctl --user start paperclipai.service
