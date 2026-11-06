@@ -8891,6 +8891,101 @@ async function terminateHeartbeatRunProcess(input: {
   );
 }
 
+type HeartbeatRunProcessTarget = {
+  pid: number | null;
+  processGroupId: number | null;
+  graceSec: number;
+};
+
+const DEFAULT_PERSISTED_PROCESS_GRACE_SEC = 20;
+
+/**
+ * Resolves the provider process of a run this server is still executing when
+ * no in-memory handle exists for it. External adapter plugins resolve their
+ * own copy of `@paperclipai/adapter-utils`, so their child is registered in a
+ * different `runningProcesses` map than the server's; only the PID/group
+ * persisted through `onSpawn` reaches the server.
+ *
+ * Persisted identifiers are signalled only while this process still owns the
+ * execution (`activeRunExecutions`) and the PID start time matches the one
+ * recorded at spawn, so a recycled PID is never targeted. A group whose leader
+ * already exited is still ours: Linux does not reuse a PID while a process
+ * group with that ID has members.
+ */
+async function resolvePersistedHeartbeatRunProcess(
+  run: Pick<
+    typeof heartbeatRuns.$inferSelect,
+    "id" | "processPid" | "processGroupId" | "processStartedAt"
+  >,
+  graceSec: number,
+): Promise<HeartbeatRunProcessTarget | null> {
+  if (!activeRunExecutions.has(run.id)) return null;
+  const pid =
+    typeof run.processPid === "number" && run.processPid > 0
+      ? run.processPid
+      : null;
+  const processGroupId =
+    typeof run.processGroupId === "number" && run.processGroupId > 0
+      ? run.processGroupId
+      : null;
+  if (pid === null && processGroupId === null) return null;
+
+  let pidOwned = false;
+  const pidAlive = pid !== null && isProcessAlive(pid);
+  if (pidAlive && run.processStartedAt) {
+    const observed = await readProcessStartedAt(pid).catch(() => null);
+    pidOwned =
+      observed !== null &&
+      new Date(observed).getTime() === run.processStartedAt.getTime();
+  }
+  const groupAlive =
+    processGroupId !== null && isProcessGroupAlive(processGroupId);
+  // When the group shares the leader's ID, a live leader with a different
+  // identity means both numbers were recycled together.
+  const groupOwned =
+    groupAlive && (processGroupId !== pid || !pidAlive || pidOwned);
+
+  if (!pidOwned && !groupOwned) return null;
+  return {
+    pid: pidOwned ? pid : null,
+    processGroupId: groupOwned ? processGroupId : null,
+    graceSec,
+  };
+}
+
+/** In-memory handle first; otherwise the owned process persisted at spawn. */
+async function resolveHeartbeatRunProcessTarget(
+  run: Parameters<typeof resolvePersistedHeartbeatRunProcess>[0] & {
+    runtimeMode: string;
+  },
+  agent: { adapterConfig: unknown } | null | undefined,
+): Promise<HeartbeatRunProcessTarget | null> {
+  const running = runningProcesses.get(run.id);
+  if (running) {
+    return {
+      pid: running.child.pid ?? null,
+      processGroupId: running.processGroupId,
+      graceSec: running.graceSec,
+    };
+  }
+  if (run.runtimeMode === "native") return null;
+  return resolvePersistedHeartbeatRunProcess(
+    run,
+    persistedProcessGraceSec(agent),
+  );
+}
+
+function persistedProcessGraceSec(
+  agent: { adapterConfig: unknown } | null | undefined,
+) {
+  const configured = parseObject(agent?.adapterConfig).graceSec;
+  return typeof configured === "number" &&
+    Number.isFinite(configured) &&
+    configured > 0
+    ? configured
+    : DEFAULT_PERSISTED_PROCESS_GRACE_SEC;
+}
+
 function buildProcessLossMessage(
   run: {
     processPid: number | null;
@@ -15074,7 +15169,7 @@ export function heartbeatService(
         continue;
       }
       const message = `Interrupted by graceful server shutdown (${signal})`;
-      const running = runningProcesses.get(run.id);
+      const processTarget = await resolveHeartbeatRunProcessTarget(run, agent);
       try {
         if (run.runtimeMode === "native") {
           await cancelHeartbeatNativeRun({
@@ -15084,11 +15179,11 @@ export function heartbeatService(
             runtimeMode: run.runtimeMode,
           });
         }
-        if (running) {
+        if (processTarget) {
           await terminateHeartbeatRunProcess({
-            pid: running.child.pid,
-            processGroupId: running.processGroupId,
-            graceMs: Math.max(1, running.graceSec) * 1000,
+            pid: processTarget.pid,
+            processGroupId: processTarget.processGroupId,
+            graceMs: Math.max(1, processTarget.graceSec) * 1000,
           });
         }
       } finally {
@@ -28730,6 +28825,19 @@ export function heartbeatService(
       return run;
     const agent = await getAgent(run.agentId);
     const errorCode = options.errorCode ?? "cancelled";
+    // Without an in-memory handle (external adapter plugins), fall back to the
+    // provider process persisted at spawn so Stop never leaves it running.
+    // Resolved before joining a pending Stop: no await may separate that join
+    // from registering this Stop's settlement below.
+    const persistedProcess =
+      run.runtimeMode !== "native" &&
+      !runningProcesses.has(run.id) &&
+      !adapterExecutionControls.has(run.id)
+        ? await resolvePersistedHeartbeatRunProcess(
+            run,
+            persistedProcessGraceSec(agent),
+          )
+        : null;
 
     const pendingProcessCancellation = processRunCancellationSettlements.get(
       run.id,
@@ -28746,6 +28854,15 @@ export function heartbeatService(
         ? captureAdapterStopOwnership(run.id)
         : undefined;
     const control = stopOwnership?.control;
+    const processTarget: HeartbeatRunProcessTarget | null = running
+      ? {
+          pid: running.child.pid ?? null,
+          processGroupId: running.processGroupId,
+          graceSec: running.graceSec,
+        }
+      : control
+        ? null
+        : persistedProcess;
     // Capture the existing adapter owner before waiting on the run lock. Then
     // atomically fence preparation and refresh the selected runtime, so Stop
     // cannot miss a native handoff that won after its first read.
@@ -28788,7 +28905,7 @@ export function heartbeatService(
       const processCancellationSettlement =
         run.runtimeMode !== "native" &&
         !control &&
-        running
+        processTarget
           ? {
               settled: new Promise<void>((resolve) => {
                 releaseProcessCancellation = resolve;
@@ -28842,15 +28959,15 @@ export function heartbeatService(
               reason,
               runtimeMode: run.runtimeMode,
             });
-            if (running) {
+            if (processTarget) {
               await terminateHeartbeatRunProcess({
-                pid: running.child.pid,
-                processGroupId: running.processGroupId,
+                pid: processTarget.pid,
+                processGroupId: processTarget.processGroupId,
                 // Codex handles Ctrl-C by cancelling its tool sessions. SIGTERM
                 // can leave commands in their separate process groups alive.
                 signal: !control && agent?.adapterType === "codex_local" ? "SIGINT" : undefined,
                 graceMs: cancellationTerminationGraceMs(
-                  running.graceSec,
+                  processTarget.graceSec,
                   options.terminationGraceMs,
                 ),
               });
@@ -28909,9 +29026,9 @@ export function heartbeatService(
                       // A scheduler placeholder has no process to acknowledge.
                       // Preserve its normal release policy instead of treating
                       // it as an operator stop of provider work.
-                      ...(processCancellationSettlement && agent && running && (
-                        (Number.isInteger(running.child.pid) && (running.child.pid ?? 0) > 0) ||
-                        (Number.isInteger(running.processGroupId) && (running.processGroupId ?? 0) > 0)
+                      ...(processCancellationSettlement && agent && processTarget && (
+                        (Number.isInteger(processTarget.pid) && (processTarget.pid ?? 0) > 0) ||
+                        (Number.isInteger(processTarget.processGroupId) && (processTarget.processGroupId ?? 0) > 0)
                       )
                         ? mergeRunStopMetadataForAgent(agent, "cancelled", {
                             resultJson: {
@@ -29054,12 +29171,15 @@ export function heartbeatService(
           error: reason,
         });
 
-        const running = runningProcesses.get(run.id);
-        if (running) {
+        const processTarget = await resolveHeartbeatRunProcessTarget(
+          run,
+          agent,
+        );
+        if (processTarget) {
           await terminateHeartbeatRunProcess({
-            pid: running.child.pid,
-            processGroupId: running.processGroupId,
-            graceMs: Math.max(1, running.graceSec) * 1000,
+            pid: processTarget.pid,
+            processGroupId: processTarget.processGroupId,
+            graceMs: Math.max(1, processTarget.graceSec) * 1000,
           });
         }
         runningProcesses.delete(run.id);
