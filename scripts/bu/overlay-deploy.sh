@@ -108,7 +108,7 @@ while IFS=$'\t' read -r src dst; do
   if [ -f "$dst" ]; then mkdir -p "$backup/files$(dirname "$dst")"; cp -p "$dst" "$backup/files$dst"; else echo "$dst" >> "$backup/new-files.txt"; fi
 done < "$plan"
 git -C "$REPO" rev-parse HEAD > "$backup/commit.txt"
-[ "$ui_changed" = 1 ] && cp -a "$UI_DIST" "$backup/ui-dist"
+[ "$ui_changed" = 1 ] && { cp -a "$UI_DIST" "$backup/ui-dist"; echo "$UI_DIST" > "$backup/ui-dist.path"; }
 echo "== backup: $backup"
 
 echo "== runtime dependencies"

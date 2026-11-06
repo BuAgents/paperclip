@@ -51,6 +51,9 @@ vi.mock("../adapters/index.ts", async () => {
   };
 });
 
+// The pre-dispatch gate rejects codex_local agents with no Codex credentials; a per-agent key satisfies it.
+const TEST_ADAPTER_CONFIG = { env: { OPENAI_API_KEY: "test-openai-key" } };
+
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
 
@@ -218,7 +221,7 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
       role: opts.agentRole ?? "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: TEST_ADAPTER_CONFIG,
       runtimeConfig: {
         heartbeat: {
           wakeOnDemand: true,
@@ -633,7 +636,7 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
           role: "engineer",
           status: "active",
           adapterType: "codex_local",
-          adapterConfig: {},
+          adapterConfig: TEST_ADAPTER_CONFIG,
           runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } },
           permissions: {},
         });
@@ -1409,7 +1412,7 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: TEST_ADAPTER_CONFIG,
       runtimeConfig: {
         heartbeat: {
           wakeOnDemand: true,

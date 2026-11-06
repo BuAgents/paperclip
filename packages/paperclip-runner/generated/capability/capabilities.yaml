@@ -857,45 +857,45 @@
       "expectedMockState": "runtime_decision_record"
     },
     {
-      "id": "skill:skills/paperclip/references/api-reference.md:1475",
+      "id": "skill:skills/paperclip/references/api-reference.md:1476",
       "kind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/api-reference.md#L1475:secrets",
+      "sourceAnchor": "skills/paperclip/references/api-reference.md#L1476:secrets",
       "heading": "Secrets",
       "primaryDisposition": "optional_agent_tool",
       "semanticOperation": "scoped_discovery",
       "expectedMockState": "operation_result"
     },
     {
-      "id": "skill:skills/paperclip/references/api-reference.md:1488",
+      "id": "skill:skills/paperclip/references/api-reference.md:1489",
       "kind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/api-reference.md#L1488:agent-secret-proposals",
+      "sourceAnchor": "skills/paperclip/references/api-reference.md#L1489:agent-secret-proposals",
       "heading": "Agent secret proposals",
       "primaryDisposition": "optional_agent_tool",
       "semanticOperation": "scoped_discovery",
       "expectedMockState": "operation_result"
     },
     {
-      "id": "skill:skills/paperclip/references/api-reference.md:1541",
+      "id": "skill:skills/paperclip/references/api-reference.md:1542",
       "kind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/api-reference.md#L1541:re-bind-an-existing-secret-under-a-new-path-no-secret-id",
+      "sourceAnchor": "skills/paperclip/references/api-reference.md#L1542:re-bind-an-existing-secret-under-a-new-path-no-secret-id",
       "heading": "Re-bind an existing secret under a new path (no secret ID)",
       "primaryDisposition": "optional_agent_tool",
       "semanticOperation": "scoped_discovery",
       "expectedMockState": "operation_result"
     },
     {
-      "id": "skill:skills/paperclip/references/api-reference.md:1588",
+      "id": "skill:skills/paperclip/references/api-reference.md:1589",
       "kind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/api-reference.md#L1588:agent-secret-access",
+      "sourceAnchor": "skills/paperclip/references/api-reference.md#L1589:agent-secret-access",
       "heading": "Agent secret access",
       "primaryDisposition": "optional_agent_tool",
       "semanticOperation": "scoped_discovery",
       "expectedMockState": "operation_result"
     },
     {
-      "id": "skill:skills/paperclip/references/api-reference.md:1628",
+      "id": "skill:skills/paperclip/references/api-reference.md:1629",
       "kind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/api-reference.md#L1628:common-mistakes",
+      "sourceAnchor": "skills/paperclip/references/api-reference.md#L1629:common-mistakes",
       "heading": "Common Mistakes",
       "primaryDisposition": "optional_agent_tool",
       "semanticOperation": "scoped_discovery",
