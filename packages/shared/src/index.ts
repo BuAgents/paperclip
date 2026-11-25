@@ -1638,6 +1638,7 @@ export type {
   OAuthRedirectConstraints,
   QuotaWindow,
   ProviderQuotaResult,
+  CachedQuotaWindows,
 } from "./types/index.js";
 export { WORKSPACE_READINESS_STATES, WORKSPACE_SOURCE_VERIFICATION_REASONS,
   type WorkspaceSourceVerificationFailure, type WorkspaceSourceInspection } from "./types/index.js";

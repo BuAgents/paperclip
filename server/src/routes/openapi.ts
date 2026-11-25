@@ -5912,6 +5912,16 @@ const costSummaryPaths = [
   "data-quality",
 ] as const;
 
+// bu-fork: agent-readable cached quota snapshot (routes/costs.ts).
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/costs/quota-windows/cached",
+  tags: ["costs"],
+  summary: "Last-known provider quota windows (no live provider calls; 503 until the first snapshot)",
+  request: { params: z.object({ companyId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
 for (const segment of costSummaryPaths) {
   registry.registerPath({
     method: "get",

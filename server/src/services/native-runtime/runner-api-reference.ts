@@ -753,6 +753,10 @@ export const runnerApiReference: Record<string, { section: string; description?:
     "section": "Approvals, Costs, Activity, Dashboard",
     "description": "Costs by project"
   },
+  "GET /api/companies/{}/costs/quota-windows/cached": {
+    "section": "Approvals, Costs, Activity, Dashboard",
+    "description": "Last-known provider quota windows (cheap, no live calls; check before delegating to an agent whose provider may be exhausted)"
+  },
   "GET /api/companies/{}/activity": {
     "section": "Approvals, Costs, Activity, Dashboard",
     "description": "Activity log"
