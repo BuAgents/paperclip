@@ -74,9 +74,12 @@ export interface ExecutionContinuationEnvelope {
   };
   unresolvedInteractionIds: string[];
   coverage: {
-    kind: "full_task_history" | "task_history_delta";
+    /** bu-fork: `truncated_task_history` = oldest messages dropped by the server's size budget. */
+    kind: "full_task_history" | "task_history_delta" | "truncated_task_history";
     baseRunId?: string;
     throughCommentId: string | null;
     summaryThroughCommentId: null;
+    /** bu-fork: number of oldest messages left out by the size budget. */
+    omittedMessageCount?: number;
   };
 }

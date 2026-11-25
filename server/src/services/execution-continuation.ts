@@ -19,6 +19,7 @@ import { childReviewOutcomes } from "./native-runtime/child-review-outcomes.js";
 import { isCompletedOnboardingHandoffWake } from "./chat-completion-delivery.js";
 import { githubRecoveryReceipts } from "./chat-channels/github/recovery-receipts.js";
 import { readTaskRetryIntent } from "./task-retry.js";
+import { enforceBudget } from "./bu-context-budget.js";
 
 const savedRecordOperations = new Set([
   "PUT /api/issues/{id}/documents/{key}",
@@ -529,7 +530,8 @@ export async function buildExecutionContinuation(input: {
     (hasConversationContinuationPolicy(lastTerminal.result) ||
       lastTerminal.status === "interrupted" || lastTerminal.errorCode === "process_lost")
     ? lastTerminal.id : undefined);
-  return {
+  // bu-fork: hard size budget on the replayed history (bu-context-budget.ts).
+  return enforceBudget({
     ...(interruptedRunId ? { interruptedRunId } : {}),
     ...(resumeDelta ? { resumeDelta } : {}),
     recoveryOutcomes: reconciliations
@@ -577,5 +579,5 @@ export async function buildExecutionContinuation(input: {
       throughCommentId: messages.at(-1)?.id ?? null,
       summaryThroughCommentId: null,
     },
-  };
+  });
 }
