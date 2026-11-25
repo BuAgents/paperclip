@@ -88,6 +88,7 @@ const providerNames: Record<ChatProvider, string> = {
   "microsoft-teams": "Microsoft Teams",
   telegram: "Telegram",
   "imessage-photon": "iMessage Photon",
+  whatsapp: "WhatsApp", // bu-fork
 };
 
 const providerLifecycleGuidance: Record<
@@ -122,6 +123,11 @@ const providerLifecycleGuidance: Record<
       "Reconnect verifies this same Microsoft app, tenant, and bot identity. It does not upload or reinstall the Teams app.",
     remove:
       "Paperclip archives the endpoint, stops new ingress, and retires its saved client secret. It does not uninstall the Teams app: the Entra app registration, Azure Bot, custom Teams app, and Teams installations remain until you remove them in Microsoft.",
+  },
+  // bu-fork
+  whatsapp: {
+    reconnect: "Reconnect re-reads the credentials folder and reconnects the linked device. It never pairs; to pair again use scripts/bu/whatsapp-pair.mjs on the server.",
+    remove: "Disconnect archives this channel. The device stays linked in WhatsApp and the credentials folder stays on the server; unlink it from WhatsApp → Linked devices if you no longer need it.",
   },
   "imessage-photon": {
     reconnect: "Reconnect verifies the same Photon project and line allocation, then recovers eligible missed messages.",

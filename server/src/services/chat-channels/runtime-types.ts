@@ -112,7 +112,7 @@ export type DiscordGatewayOwnership = {
   context: RuntimeContext;
   endpointId: string;
   expiresAt: Date;
-  leaseKey: "discord_gateway_runtime" | "photon_receiver_runtime";
+  leaseKey: "discord_gateway_runtime" | "photon_receiver_runtime" | "whatsapp_receiver_runtime"; // bu-fork: whatsapp
   renewTimer: ReturnType<typeof setInterval> | null;
   renewal: Promise<void> | null;
   stopPromise: Promise<void> | null;

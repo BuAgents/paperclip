@@ -3,6 +3,7 @@ import { PhotonChatAdapter, parsePhotonThreadId } from "./photon/adapter.js";
 import { PhotonLineAuthentication } from "./photon/cloud.js";
 import { PhotonState } from "./photon/state.js";
 import { PhotonReceiver } from "./photon/receiver.js";
+import { WhatsappChatAdapter, type WhatsappError } from "./whatsapp/adapter.js"; // bu-fork: WhatsApp
 import { photonAttachmentLocator, photonAttachmentLocatorSchema, downloadPhotonAttachment, type PhotonAttachmentLocator } from "./photon/attachments.js";
 import type { LiveEvent as PhotonEvent } from "@photon-ai/advanced-imessage";
 import {
@@ -137,8 +138,8 @@ const DISCORD_GATEWAY_HEALTHY_SESSION_MS = 60_000;
 
 /** Public Paperclip provider ids. The Teams SDK name remains an internal detail. */
 export type ChatSdkProvider =
-  "slack" | "github" | "discord" | "microsoft-teams" | "telegram" | "imessage-photon";
-type ChatSdkAdapterKey = "slack" | "github" | "discord" | "teams" | "telegram" | "imessage-photon";
+  "slack" | "github" | "discord" | "microsoft-teams" | "telegram" | "imessage-photon" | "whatsapp";
+type ChatSdkAdapterKey = "slack" | "github" | "discord" | "teams" | "telegram" | "imessage-photon" | "whatsapp";
 
 interface ProviderConfigBase {
   /** Agent-derived native bot display/mention name. */
@@ -212,7 +213,13 @@ export interface ResolvedPhotonChatConfig extends ProviderConfigBase {
   intakeAfter: number;
   credentials: { allocation?: "dedicated" | "shared"; projectId: string; projectSecret: string; lineId: string; phoneNumber: string };
 }
+/** bu-fork: WhatsApp linked device; the auth dir holds the Baileys pairing. */
+export interface ResolvedWhatsappChatConfig extends ProviderConfigBase {
+  provider: "whatsapp";
+  credentials: { authDir: string; phoneNumber: string };
+}
 export type ResolvedChatSdkProviderConfig =
+  | ResolvedWhatsappChatConfig
   | ResolvedPhotonChatConfig
   | ResolvedSlackChatConfig
   | ResolvedGitHubChatConfig
@@ -469,6 +476,9 @@ export interface DiscordGatewayCallbackEvent extends ChatSdkCallbackEvent<Discor
  * Chat SDK event escape hatches; callers must never publish them directly.
  */
 export interface ChatSdkRuntimeCallbacks {
+  /** bu-fork: WhatsApp receiver health. */
+  onWhatsappConnected?(): Promise<void>;
+  onWhatsappFailure?(error: WhatsappError): Promise<void>;
   onPhotonEvent?(event: PhotonEvent): Promise<void>;
   onPhotonAssertOwned?(activeThreadId?: string): Promise<void>;
   onPhotonCheckpoint?(sequence: number): Promise<void>;
@@ -1360,6 +1370,7 @@ function createProviderAdapter(
   const resolvedLogger = adapterLogger(logger);
   switch (config.provider) {
     case "imessage-photon": throw new Error("Photon adapter requires scoped persistence");
+    case "whatsapp": return new WhatsappChatAdapter(config.userName, config.credentials.authDir, config.credentials.phoneNumber); // bu-fork
     case "slack": {
       const adapterConfig: SlackAdapterConfig = {
         ...config.credentials,
@@ -2309,6 +2320,14 @@ export class ChatSdkEndpointRuntime {
     }
     if (this.provider === "discord" && this.discordGatewayEnabled) {
       this.startDiscordGateway();
+    }
+    // bu-fork: WhatsApp — only the receiver-lease owner opens the socket.
+    if (this.adapter instanceof WhatsappChatAdapter && this.discordGatewayEnabled) {
+      const callbacks = this.runtimeOptions.callbacks;
+      await this.adapter.startReceiver({
+        connected: async () => { if (!this.retired) await callbacks.onWhatsappConnected?.(); },
+        failure: async (error) => { if (!this.retired) await callbacks.onWhatsappFailure?.(error); },
+      });
     }
   }
 

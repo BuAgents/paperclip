@@ -657,6 +657,8 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
       { slug: "speko", name: "Speko", description: "Talk with an agent using experimental browser voice." },
       { slug: "agentmail", name: "AgentMail", description: "Give agents email inboxes and handle each conversation as a task." },
       { slug: "imessage-photon", name: "iMessage Photon", description: "Message agents and share photos from Apple Messages with a dedicated Photon number." },
+      // bu-fork
+      { slug: "whatsapp", name: "WhatsApp", description: "Talk to an agent from WhatsApp through a number linked to this server. Linked people only; groups answer when mentioned." },
       {
         slug: "slack",
         name: "Slack",
@@ -790,6 +792,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
           "microsoft-teams": "Microsoft Teams",
           telegram: "Telegram",
           "imessage-photon": "iMessage Photon",
+          whatsapp: "WhatsApp", // bu-fork
   agentmail: "AgentMail",
         } as const;
         target = {

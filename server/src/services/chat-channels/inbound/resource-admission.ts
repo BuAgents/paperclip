@@ -1,3 +1,4 @@
+import { photonLikeConversation } from "../../whatsapp/channel.js"; // bu-fork
 import { createChatInboundAuthority } from "./authorization.js";
 
 import type { EndpointRow } from "../runtime-types.js";
@@ -41,7 +42,7 @@ export function createMessageResourceAdmission(db: Db, options: { ensureResource
         // Slack channels start enabled. Never use first-test activation to
         // override an existing channel the operator explicitly disabled.
         endpoint.provider !== "slack" &&
-        endpoint.provider !== "imessage-photon" &&
+        !photonLikeConversation(endpoint.provider) && // bu-fork: whatsapp
         !thread.isDM &&
         endpoint.status === "verifying" &&
         addressed &&

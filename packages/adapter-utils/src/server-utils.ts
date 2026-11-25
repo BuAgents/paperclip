@@ -793,7 +793,7 @@ type PaperclipWakeRecovery = {
 };
 
 export type PaperclipExternalChatProvider =
-  "slack" | "github" | "discord" | "microsoft-teams" | "telegram" | "imessage-photon" | "speko";
+  "slack" | "github" | "discord" | "microsoft-teams" | "telegram" | "imessage-photon" | "speko" | "whatsapp";
 
 type PaperclipWakePayload = {
   githubReviewConfigurations: Array<{ key: string; instructions: string }>;
@@ -1680,6 +1680,18 @@ function markdownFencedText(value: string): string {
   return `${fence}text\n${value}\n${fence}`;
 }
 
+// bu-fork: WhatsApp is read on a phone. These rules apply to every WhatsApp
+// turn, on top of the agent's own instructions, which stay unchanged elsewhere.
+const WHATSAPP_STYLE_CONTRACT = [
+  "WhatsApp style (the user reads this on a phone):",
+  "- Answer first, in 1-3 short sentences. Stay under about 600 characters unless the user asks for detail.",
+  "- No greetings, sign-offs, recaps of what you checked, or internal status notes.",
+  "- Plain text. No headings or tables; at most 3 short bullets.",
+  "- Ask at most one question, and only when you cannot proceed without it.",
+  "- For real work (code, research, anything longer than a quick answer), create or update a Paperclip task and reply with one line and its identifier.",
+  "- Reply in the language the user wrote in.",
+];
+
 const PAPERCLIP_EXTERNAL_CHAT_PROVIDERS =
   new Set<PaperclipExternalChatProvider>([
     "slack",
@@ -1689,6 +1701,7 @@ const PAPERCLIP_EXTERNAL_CHAT_PROVIDERS =
     "telegram",
     "speko",
     "imessage-photon",
+    "whatsapp", // bu-fork
   ]);
 
 function normalizePaperclipExternalChatProvider(
@@ -2457,6 +2470,7 @@ function renderPaperclipWakePromptBody(
           : []),
         "If the user explicitly asks to keep this current chat task open and wait for their next provider message without scheduling more work, report `yielded` with continuation kind `response_wake`; do not report `done`. Use that wait only after completing this turn's requested response, and never use it to defer unfinished work or for an ordinary completed request. Paperclip independently verifies the current chat binding before preserving the task.",
         `File-delivery contract: ${paperclipChatFilePreparationDelivery(normalized.externalChatProvider).guidance}`,
+        ...(normalized.externalChatProvider === "whatsapp" ? WHATSAPP_STYLE_CONTRACT : []), // bu-fork
         "When the request genuinely requires files, investigation, external access, or mutations, use the appropriate tools and complete every required permission, approval, execution-policy, containment, budget, pause/cancel, and company-boundary check. This response shortcut grants no new authority.",
         "Keep the final response concise and provider-facing. Do not narrate Paperclip workflow, checkout, status, or completion bookkeeping. Keep wait and review dispositions in the semantic control fields rather than appending status boilerplate to the answer. Mention task state only when the user asks about it or must act on a real blocker.",
         "",

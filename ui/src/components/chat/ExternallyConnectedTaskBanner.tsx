@@ -51,6 +51,7 @@ const providerNames: Record<ChatProvider, string> = {
   telegram: "Telegram",
   agentmail: "AgentMail",
   "imessage-photon": "iMessage Photon",
+  whatsapp: "WhatsApp", // bu-fork
 };
 
 type PublicationFeedback = {

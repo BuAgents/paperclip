@@ -1,3 +1,4 @@
+import { verifyWhatsappCredentials } from "../whatsapp/credentials.js"; // bu-fork
 import { notifyChatEndpointConfiguration } from "./configuration-work-notifications.js";
 import { prepareSlackInventory } from "./slack/inventory.js";
 import { prepareGitHubInventory } from "./github/inventory.js";
@@ -122,6 +123,7 @@ export function createChatCredentials(db: Db, options: ChatCredentialsOptions) {
     provider: ChatProvider,
     credentials: Record<string, string>,
   ): Promise<VerifiedProviderIdentity> {
+    if (provider === "whatsapp") return verifyWhatsappCredentials(credentials.authDir ?? ""); // bu-fork
     if (provider === "imessage-photon") return verifyPhotonCredentials(credentials);
     if (provider === "slack") return verifySlackCredentials(credentials, fetchImpl, PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS);
     if (provider === "discord") return verifyDiscordCredentials(credentials, fetchImpl, redactError);
@@ -151,7 +153,8 @@ export function createChatCredentials(db: Db, options: ChatCredentialsOptions) {
     return (
       provider === "github" ||
       provider === "discord" ||
-      provider === "microsoft-teams" || provider === "imessage-photon"
+      provider === "microsoft-teams" || provider === "imessage-photon" ||
+      provider === "whatsapp" // bu-fork
     );
   }
 

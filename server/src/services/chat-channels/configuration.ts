@@ -1,3 +1,4 @@
+import { whatsappRuntimeConfig } from "../whatsapp/channel.js"; // bu-fork
 import { notifyChatEndpointConfiguration } from "./configuration-work-notifications.js";
 import { notifyChatConnectionHealth } from "./connection-health-notifications.js";
 import type { ConnectionManagementContext } from "../connection-management.js";
@@ -571,7 +572,7 @@ export function createChatConfiguration(db: Db, options: ChatConfigurationOption
     ) {
       throw unprocessable("Unsupported chat endpoint setup action");
     }
-    if (!getWebhookPublicBaseUrl() && endpoint.provider !== "discord" && endpoint.provider !== "imessage-photon" && !(endpoint.provider === "github" && endpoint.setup.github?.cloudRegistrationId)) {
+    if (!getWebhookPublicBaseUrl() && endpoint.provider !== "discord" && endpoint.provider !== "imessage-photon" && endpoint.provider !== "whatsapp" /* bu-fork */ && !(endpoint.provider === "github" && endpoint.setup.github?.cloudRegistrationId)) {
       throw unprocessable(
         `A public HTTPS Paperclip URL is required before connecting ${PROVIDER_LABELS[endpoint.provider]}`,
       );
@@ -955,6 +956,7 @@ export function createChatConfiguration(db: Db, options: ChatConfigurationOption
     credentials: Record<string, string>,
   ): ResolvedChatSdkProviderConfig {
     if (endpoint.provider === "speko") throw conflict("Speko uses the voice runtime");
+    if (endpoint.provider === "whatsapp") return whatsappRuntimeConfig(endpoint, userName, credentials); // bu-fork
     if (endpoint.provider === "imessage-photon") return {
       provider: "imessage-photon", userName,
       intakeAfter: Date.parse(String((endpoint.setup as InternalSetupState).photonIntakeAfter ?? endpoint.setup.testStartedAt ?? endpoint.createdAt.toISOString())),

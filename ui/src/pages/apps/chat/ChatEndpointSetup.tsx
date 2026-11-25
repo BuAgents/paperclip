@@ -66,6 +66,7 @@ const providerNames: Record<ChatProvider, string> = {
   "microsoft-teams": "Microsoft Teams",
   telegram: "Telegram",
   "imessage-photon": "iMessage Photon",
+  whatsapp: "WhatsApp", // bu-fork
 };
 
 const knownProviders = new Set(Object.keys(providerNames));
@@ -937,6 +938,42 @@ function ProviderConnectStep({
     2,
   );
   if (provider === "speko") return <SpekoProviderSetup onSaveExit={() => navigate("/apps")} agentName={agentName} credentials={credentials} onChange={setCredentials} onConnect={(values) => onAction(repairing ? "reconnect" : "configure", values)} callbackUrl={endpoint.setup?.webhookUrl} pending={pending} repairing={repairing} signingSecretConfigured={endpoint.setup?.webhookSecretConfigured} />;
+  // bu-fork: WhatsApp linked device
+  if (provider === "whatsapp")
+    return (
+      <div className="space-y-5">
+        <div>
+          <h1 className="text-xl font-bold">Connect {agentName} to WhatsApp</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {repairing
+              ? "Reconnect re-reads the credentials folder and reconnects the linked device. It never pairs again."
+              : "Paperclip joins WhatsApp as a linked device of the bot number, using a pairing you create once on the server."}
+          </p>
+        </div>
+        <ol className="list-decimal space-y-2 pl-5 text-sm">
+          <li>
+            On the server, run <code>node scripts/bu/whatsapp-pair.mjs</code> in the Paperclip fork
+            (skip this if the number is already paired).
+          </li>
+          <li>
+            On the bot phone: WhatsApp → Settings → Linked devices → Link a device, and scan the QR it prints.
+          </li>
+          <li>Enter the credentials folder it wrote, then connect.</li>
+        </ol>
+        <p className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+          Only people you link in Access get answers; anyone else is ignored without a reply. Groups
+          must be enabled in Settings and answer only when {agentName} is @mentioned or replied to.
+        </p>
+        {field("authDir", "Credentials folder", "text")}
+        <Button
+          disabled={(!repairing && !credentials.authDir) || pending}
+          onClick={() => onAction(repairing ? "reconnect" : "configure", credentials)}
+        >
+          {pending && <Loader2 className="h-4 w-4 animate-spin" />}
+          {repairing ? "Reconnect" : "Connect WhatsApp"}
+        </Button>
+      </div>
+    );
   if (provider === "imessage-photon") return <PhotonConnectStep endpoint={endpoint} agentName={agentName} repairing={repairing} pending={pending} onAction={onAction} />;
   if (provider === "discord") {
     const applicationId = credentials.applicationId?.trim() ?? "";
@@ -1820,14 +1857,16 @@ function TryStep({
     (identity) => identity.status !== "linked",
   );
   const freshConversationInstruction =
-    provider === "imessage-photon" ? "send a fresh message to your Photon number" : provider === "telegram"
+    provider === "imessage-photon" ? "send a fresh message to your Photon number" : provider === "whatsapp" ? "send a fresh WhatsApp message to the bot number" : provider === "telegram"
       ? "start a fresh conversation with /new and send the test message again"
       : provider === "github"
         ? "start a new issue or pull request conversation and mention the agent again"
         : provider === "microsoft-teams"
           ? "start a new channel post and mention the agent again"
           : "send a new root mention to the agent";
-  const identityGuidance = provider === "slack" ? null : provider === "imessage-photon" && principalsLoaded && (identities.length === 0 || unlinkedIdentities.length > 0)
+  const identityGuidance = provider === "slack" ? null : provider === "whatsapp" && principalsLoaded && (identities.length === 0 || unlinkedIdentities.length > 0)
+    ? { tone: "info" as const, title: "Link your WhatsApp number", body: "Send one message from your phone to the bot number to discover your WhatsApp identity, then link it to your Paperclip account in Access. Send a fresh message after linking; earlier messages are not replayed." }
+    : provider === "imessage-photon" && principalsLoaded && (identities.length === 0 || unlinkedIdentities.length > 0)
     ? { tone: "info" as const, title: "Link your Messages identity", body: "Send one message to discover your phone number or Apple account address, then link that exact identity in Access. Send a fresh request after linking; earlier messages do not start work." }
     : principalsFailed
     ? {
@@ -1878,7 +1917,12 @@ function TryStep({
     : (botLabel ?? agentName);
   const slackTestMessage = slackAccount?.status === "linked" ? "you there?" : `${botMention.startsWith("@") ? botMention : `@${botMention}`} you there?`;
   const instructions =
-    provider === "imessage-photon" ? [
+    provider === "whatsapp" ? [
+      "From your own phone, send a WhatsApp message to the bot number.",
+      "Link the discovered number to your Paperclip account in Access, then send a fresh message.",
+      "Wait for the agent’s reply. Setup completes after that reply is delivered.",
+      "For a group: add the bot number to the group, mention it once, enable the discovered group in Settings, then mention it again.",
+    ] : provider === "imessage-photon" ? [
       photonAllocation === "shared" ? "In your Photon project, enroll your sender in Users and find its assigned number in Get started. Send a fresh message to that number from Apple Messages." : `Open Apple Messages and send a fresh message to ${botUsername ?? botLabel ?? "the dedicated number"}.`,
       "Link the discovered sender to a Paperclip person in Access, then send a fresh request.",
       "Wait for the agent’s actual reply. Setup completes after that reply is delivered.",
