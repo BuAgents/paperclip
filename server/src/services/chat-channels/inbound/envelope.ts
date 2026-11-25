@@ -313,7 +313,7 @@ export function createInboundEnvelope(db: Db, options: InboundEnvelopeOptions) {
             : nativeInboundAttachments.includes(attachment)
               ? endpointRuntime.attachmentRecoveryDescriptor(
                   attachment,
-                  ["telegram", "imessage-photon"].includes(endpoint.provider)
+                  ["telegram", "imessage-photon", "whatsapp" /* bu-fork */].includes(endpoint.provider)
                     ? attachmentSource
                     : undefined,
                 )

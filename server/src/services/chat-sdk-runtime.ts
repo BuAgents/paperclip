@@ -3,7 +3,7 @@ import { PhotonChatAdapter, parsePhotonThreadId } from "./photon/adapter.js";
 import { PhotonLineAuthentication } from "./photon/cloud.js";
 import { PhotonState } from "./photon/state.js";
 import { PhotonReceiver } from "./photon/receiver.js";
-import { WhatsappChatAdapter, type WhatsappError } from "./whatsapp/adapter.js"; // bu-fork: WhatsApp
+import { WhatsappChatAdapter, downloadWhatsappMedia, parseWhatsappMediaLocator, type WhatsappError, type WhatsappMediaLocator } from "./whatsapp/adapter.js"; // bu-fork: WhatsApp
 import { photonAttachmentLocator, photonAttachmentLocatorSchema, downloadPhotonAttachment, type PhotonAttachmentLocator } from "./photon/attachments.js";
 import type { LiveEvent as PhotonEvent } from "@photon-ai/advanced-imessage";
 import {
@@ -242,6 +242,7 @@ interface DurableAttachmentMetadata {
 }
 
 type ChatSdkAttachmentLocator =
+  | WhatsappMediaLocator // bu-fork
   | PhotonAttachmentLocator
   | GitHubPublicAttachmentLocator
   | TeamsInlineImageLocator
@@ -2776,6 +2777,15 @@ export class ChatSdkEndpointRuntime {
       const metadata = durableAttachmentMetadata(attachment);
       return locator && metadata ? { version: 1, provider: "telegram", attachment: metadata, locator } : null;
     }
+    // bu-fork: WhatsApp images — source-bound locator (chat + message must match).
+    if (this.adapter instanceof WhatsappChatAdapter) {
+      const meta = (attachment as { fetchMetadata?: Record<string, unknown> }).fetchMetadata;
+      const locator = parseWhatsappMediaLocator(meta ? { ...meta, size: meta.size === "" || meta.size === undefined ? null : Number(meta.size) } : null);
+      const metadata = durableAttachmentMetadata(attachment);
+      if (!locator || !metadata) return null;
+      if (source && (this.adapter.decodeThreadId(source.threadId).chatJid !== locator.chatJid || source.messageId !== locator.messageId)) return null;
+      return { version: 1, provider: "whatsapp", attachment: metadata, locator };
+    }
     if (this.adapter instanceof PhotonChatAdapter && source?.message) {
       const thread = this.adapter.decodeThreadId(source.threadId);
       const locator = photonAttachmentLocator(attachment, thread.lineId, thread.chatGuid, source.message);
@@ -2951,6 +2961,14 @@ export class ChatSdkEndpointRuntime {
     descriptor: unknown,
     source?: ChatSdkAttachmentSource,
   ): Attachment | null {
+    // bu-fork: WhatsApp images
+    if (this.adapter instanceof WhatsappChatAdapter) {
+      if (!isRecord(descriptor) || descriptor.version !== 1 || descriptor.provider !== "whatsapp" || !source) return null;
+      const locator = parseWhatsappMediaLocator(descriptor.locator);
+      const metadata = isRecord(descriptor.attachment) ? durableAttachmentMetadata(descriptor.attachment as unknown as Attachment) : null;
+      if (!locator || !metadata || this.adapter.decodeThreadId(source.threadId).chatJid !== locator.chatJid || source.messageId !== locator.messageId) return null;
+      return { ...metadata, fetchData: () => downloadWhatsappMedia(locator) };
+    }
     if (this.adapter instanceof PhotonChatAdapter && isRecord(descriptor) && descriptor.version === 1 && descriptor.provider === this.provider && source) {
       const parsed = photonAttachmentLocatorSchema.safeParse(descriptor.locator);
       const thread = this.adapter.decodeThreadId(source.threadId);
@@ -3137,6 +3155,8 @@ export class ChatSdkEndpointRuntime {
         return null; // Only the exact source-bound branch above may authorize it.
       case "telegram_media":
         return null; // Only the exact source-bound branch above may authorize it.
+      case "whatsapp_media":
+        return null; // bu-fork: only the source-bound WhatsApp branch above may authorize it.
       case "teams_anonymous_url":
         fetchMetadata = { url: validated.locator.url };
         break;

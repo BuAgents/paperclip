@@ -13,6 +13,7 @@ import { join } from "node:path";
 import makeWASocket, {
   Browsers,
   DisconnectReason,
+  downloadContentFromMessage,
   fetchLatestWaWebVersion,
   normalizeMessageContent,
   useMultiFileAuthState,
@@ -30,7 +31,10 @@ import {
   type FetchOptions,
   type FormattedContent,
   type ThreadInfo,
+  type Attachment,
 } from "chat";
+import { formatDuration, transcribeAudio } from "../bu-transcriber.js";
+import { MAX_ATTACHMENT_BYTES } from "../../attachment-types.js";
 import {
   addressesBot,
   jidUser,
@@ -43,8 +47,51 @@ import {
   type ContextInfoLike,
 } from "./format.js";
 
+/**
+ * Enough to download and decrypt one WhatsApp image later (durable intake
+ * processes messages after the socket event). mediaKey decrypts only this file.
+ */
+export interface WhatsappMediaLocator {
+  kind: "whatsapp_media";
+  chatJid: string;
+  messageId: string;
+  url: string;
+  directPath: string;
+  mediaKey: string; // base64
+  mimeType: string;
+  size: number | null;
+}
+
+export function parseWhatsappMediaLocator(value: unknown): WhatsappMediaLocator | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  const str = (k: string, max = 4096) => (typeof v[k] === "string" && (v[k] as string).length > 0 && (v[k] as string).length <= max ? (v[k] as string) : null);
+  const chatJid = str("chatJid", 200), messageId = str("messageId", 200), url = str("url"), directPath = str("directPath"),
+    mediaKey = str("mediaKey", 200), mimeType = str("mimeType", 120);
+  if (v.kind !== "whatsapp_media" || !chatJid || !messageId || !url || !directPath || !mediaKey || !mimeType) return null;
+  if (!url.startsWith("https://") || !/^image\//.test(mimeType)) return null;
+  const size = typeof v.size === "number" && Number.isSafeInteger(v.size) && v.size >= 0 ? v.size : null;
+  return { kind: "whatsapp_media", chatJid, messageId, url, directPath, mediaKey, mimeType, size };
+}
+
+export async function downloadWhatsappMedia(locator: WhatsappMediaLocator): Promise<Buffer> {
+  const stream = await downloadContentFromMessage(
+    { url: locator.url, directPath: locator.directPath, mediaKey: Buffer.from(locator.mediaKey, "base64") },
+    "image",
+  );
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of stream) {
+    total += chunk.length;
+    if (total > MAX_ATTACHMENT_BYTES) throw new Error("WhatsApp image exceeds the attachment size limit");
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
 export type WhatsappRaw = {
   key: { id: string; remoteJid: string };
+  image?: WhatsappMediaLocator | null;
   senderId: string;
   pushName: string | null;
   text: string;
@@ -77,6 +124,18 @@ function textOf(message: AdapterPostableMessage): string {
   if ("ast" in message) return stringifyMarkdown(message.ast);
   if ("fallbackText" in message) return message.fallbackText ?? "";
   return "";
+}
+
+function whatsappImageAttachment(locator: WhatsappMediaLocator): Attachment {
+  const ext = locator.mimeType.split("/")[1]?.split(";")[0]?.replace(/[^a-z0-9]/g, "") || "jpg";
+  return {
+    type: "image",
+    name: `whatsapp-image.${ext}`,
+    mimeType: locator.mimeType,
+    size: locator.size ?? undefined,
+    fetchMetadata: { ...locator, size: locator.size === null ? "" : String(locator.size) },
+    fetchData: () => downloadWhatsappMedia(locator),
+  } as Attachment;
 }
 
 export class WhatsappChatAdapter implements Adapter<{ chatJid: string; isGroup: boolean }, WhatsappRaw> {
@@ -212,7 +271,7 @@ export class WhatsappChatAdapter implements Adapter<{ chatJid: string; isGroup: 
     if (!sender) return;
     const content = normalizeMessageContent(message.message);
     if (!content || content.protocolMessage || content.reactionMessage) return;
-    const text =
+    let text =
       content.conversation ??
       content.extendedTextMessage?.text ??
       content.imageMessage?.caption ??
@@ -224,13 +283,26 @@ export class WhatsappChatAdapter implements Adapter<{ chatJid: string; isGroup: 
       content.imageMessage?.contextInfo ??
       content.videoMessage?.contextInfo ??
       content.documentMessage?.contextInfo ??
+      content.audioMessage?.contextInfo ??
       null;
     const isMention = sender.isGroup ? addressesBot(context, this.botUsers) : false;
     // Groups answer only when addressed; nothing else from a group reaches Paperclip.
     if (sender.isGroup && !isMention) return;
     if (message.pushName) this.names.set(sender.senderId, message.pushName);
+    let image: WhatsappMediaLocator | null = null;
+    const img = content.imageMessage;
+    if (img?.url && img.directPath && img.mediaKey) {
+      image = {
+        kind: "whatsapp_media", chatJid: sender.chatJid, messageId: message.key.id,
+        url: img.url, directPath: img.directPath, mediaKey: Buffer.from(img.mediaKey).toString("base64"),
+        mimeType: img.mimetype || "image/jpeg", size: img.fileLength ? Number(img.fileLength) : null,
+      };
+      text = text ?? "";
+    }
+    if (content.audioMessage) text = await this.transcribeVoiceNote(message);
     const raw: WhatsappRaw = {
       key: { id: message.key.id, remoteJid: sender.chatJid },
+      image,
       senderId: sender.senderId,
       pushName: message.pushName ?? null,
       text: text === null ? "[Unsupported WhatsApp message: only text is supported]" : stripBotMentions(text, this.botUsers),
@@ -240,6 +312,26 @@ export class WhatsappChatAdapter implements Adapter<{ chatJid: string; isGroup: 
     };
     const threadId = whatsappThreadId(sender.chatJid);
     await this.chat.processMessage(this, threadId, this.parseMessage(raw));
+  }
+
+  /** Voice notes become text before they reach Paperclip (local Whisper). */
+  private async transcribeVoiceNote(message: WAMessage): Promise<string> {
+    const audio = normalizeMessageContent(message.message)?.audioMessage;
+    const seconds = audio?.seconds ? Number(audio.seconds) : null;
+    const label = `Voice note${seconds ? ` (${formatDuration(seconds)})` : ""}`;
+    try {
+      if (!audio?.url || !audio.directPath || !audio.mediaKey) throw new Error("missing media");
+      const stream = await downloadContentFromMessage(
+        { url: audio.url, directPath: audio.directPath, mediaKey: audio.mediaKey },
+        "audio",
+      );
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) chunks.push(chunk as Buffer);
+      const transcript = await transcribeAudio(Buffer.concat(chunks), "ogg");
+      return transcript.text ? `🎤 ${label}, transcribed: ${transcript.text}` : `🎤 ${label}: [no speech detected]`;
+    } catch {
+      return `🎤 ${label}: [could not be transcribed]`;
+    }
   }
 
   encodeThreadId(value: { chatJid: string }): string {
@@ -265,7 +357,7 @@ export class WhatsappChatAdapter implements Adapter<{ chatJid: string; isGroup: 
       text: raw.text,
       formatted: parseMarkdown(raw.text),
       raw,
-      attachments: [],
+      attachments: raw.image ? [whatsappImageAttachment(raw.image)] : [],
       author: {
         userId: `whatsapp:${raw.senderId}`,
         userName: raw.senderId,

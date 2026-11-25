@@ -267,6 +267,7 @@ export function createChatConversationDeliveryQueue(db: Db, options: Conversatio
         if (
           isTeams ||
           endpointRuntime.provider === "imessage-photon" ||
+          endpointRuntime.provider === "whatsapp" /* bu-fork */ ||
           (endpointRuntime.provider === "telegram" &&
             typeof attachment.recovery === "object" &&
             attachment.recovery !== null &&

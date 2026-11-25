@@ -395,7 +395,8 @@ export function createInboundAttachments(db: Db, options: InboundAttachmentsOpti
       const sourceBoundMedia =
         teamsInlineImage ||
         telegramMedia ||
-        input.endpoint.provider === "imessage-photon";
+        input.endpoint.provider === "imessage-photon" ||
+        input.endpoint.provider === "whatsapp"; // bu-fork: source-bound WhatsApp images
       const requireCurrentAttachmentAuthorization =
         input.endpoint.provider === "github" || sourceBoundMedia;
       try {
