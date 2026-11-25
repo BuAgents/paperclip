@@ -628,6 +628,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
         [
           "claude_local", "codex_local", "cursor", "gemini_local", "opencode_local",
           "pi_local", "grok_local", "kimi_local", "hermes_local",
+          "antigravity_local", "zai_local", // bu-fork: plugin session adapters (BUD-357)
         ].includes(run.adapterType ?? "")
       ) return false;
       return [

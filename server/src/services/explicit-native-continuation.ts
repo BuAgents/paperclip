@@ -328,7 +328,14 @@ export async function admitExplicitNativeContinuation(input: {
     let [run] = await db.select({ ...continuationRunFields, runnerProfileJson: preflightProfile }).from(heartbeatRuns).where(and(
       eq(heartbeatRuns.companyId, companyId), sql`${heartbeatRuns.id}::text = ${runId}`,
     ));
-    if (!run || run.agentId !== agentId || !terminal.includes(run.status) ||
+    // bu-fork (BUD-357): the board reassigned a stopped legacy run's task to
+    // another conversation agent. That agent starts a fresh conversation (it
+    // never resumes the old provider session), so the user's message may hand
+    // it the task; the stop proofs below still apply to the old run. Without
+    // this the hold named the previous owner forever ("source_unavailable").
+    const legacyHandoff = Boolean(run) && run.agentId !== agentId && run.runtimeMode === "legacy" &&
+      action.cause === "legacy_execution_requires_reconciliation" && isConversationAdapter(agent.adapterType);
+    if (!run || (run.agentId !== agentId && !legacyHandoff) || !terminal.includes(run.status) ||
         (run.nativeIssueId ?? run.issueId ?? run.contextSnapshot?.issueId) !== issueId ||
         !run.finishedAt) return blocked("source_unavailable", "The previous execution has not finished or its owner changed. Your message is saved.");
     if (!queuedInterrupt && !queuedRequest && authorizedAt <= userStopBoundaryAt(run)!) return blocked("message_predates_stop", "This message arrived before the previous run stopped. Send a new message to continue.");
@@ -370,7 +377,7 @@ export async function admitExplicitNativeContinuation(input: {
     // operator Stop or redeliver a message already consumed by this run.
     if (queuedRequest && !queuedInterrupt && (run.contextSnapshot?.wakeCommentId === commentId ||
         (Array.isArray(run.contextSnapshot?.wakeCommentIds) && run.contextSnapshot.wakeCommentIds.includes(commentId)))) return null;
-    if (legacyUserTurn && !failedPreparation) {
+    if (legacyUserTurn && !failedPreparation && !legacyHandoff) {
       const historicalAdapter = await historicalAdapterType(db, run);
       // A settings change never converts a known process/webhook execution into
       // a conversation. Those adapters retain their reconciliation contract.

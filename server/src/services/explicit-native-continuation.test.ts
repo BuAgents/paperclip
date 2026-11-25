@@ -27,7 +27,7 @@ import { startEmbeddedPostgresTestDatabase, getEmbeddedPostgresTestSupport } fro
 import { resolveExternalTestDatabaseUrl } from "../__tests__/helpers/external-test-database.js";
 import { admitExplicitNativeContinuation } from "./explicit-native-continuation.js";
 import { adapterExecutionControls, createAdapterExecutionControl } from "./adapter-execution-control.js";
-import { CONVERSATION_CONTINUATION_POLICY } from "./conversation-continuation.js";
+import { CONVERSATION_CONTINUATION_POLICY, isConversationAdapter } from "./conversation-continuation.js";
 import { buildExecutionContinuation } from "./execution-continuation.js";
 import { verifiedWorkspaceRepairReceipt } from "./workspace-recovery-receipt.js";
 import { heartbeatService, persistHeartbeatRunProcessMetadata, type HeartbeatEnvironmentRuntime } from "./heartbeat.js";
@@ -2154,6 +2154,66 @@ const support = externalUrl ? { supported: true } : await getEmbeddedPostgresTes
     expect(envelope.interruptedRunId).toBe(f.sourceRunId);
     expect(envelope.objective).toBe("What happened?");
     expect(envelope.completedWork).toBe("Deployment completed.");
+  });
+
+  // bu-fork (BUD-357): a plugin-adapter run failed on quota, leaving a legacy no-replay hold;
+  // the board reassigned the task to a Claude agent and commented. The hold named the old
+  // owner's run, so every wake was parked as "source_unavailable" forever.
+  async function seedLegacyHandoff(nextAdapterType = "claude_local") {
+    const f = await seed(), nextAgentId = randomUUID();
+    await db.delete(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, f.sourceRunId));
+    await db.update(agents).set({ adapterType: "antigravity_local" }).where(eq(agents.id, f.agentId));
+    await db.update(heartbeatRuns).set({ runtimeMode: "legacy", nativeIssueId: null,
+      errorCode: "antigravity_quota_exceeded", startedAt: new Date("2026-09-11T09:58:00Z"),
+      runnerProfileJson: { adapterDispatch: { adapterType: "antigravity_local" } } })
+      .where(eq(heartbeatRuns.id, f.sourceRunId));
+    await db.update(issueRecoveryActions).set({ cause: "legacy_execution_requires_reconciliation" })
+      .where(eq(issueRecoveryActions.sourceIssueId, f.issueId));
+    await db.insert(agents).values({ id: nextAgentId, companyId: f.companyId, name: "Replacement", role: "engineer",
+      adapterType: nextAdapterType, status: "idle", runtimeConfig: { heartbeat: { maxConcurrentRuns: 1 } } });
+    await db.update(issues).set({ status: "todo", assigneeAgentId: nextAgentId }).where(eq(issues.id, f.issueId));
+    return { ...f, previousAgentId: f.agentId, agentId: nextAgentId };
+  }
+  it("hands a legacy hold to the reassigned conversation agent on the board's next message", async () => {
+    const f = await seedLegacyHandoff();
+    expect(await getExecutionBlocker(db, f.companyId, f.issueId)).toMatchObject({ agentId: f.previousAgentId });
+    // Occupy the new agent's only slot so admission is real but no provider starts.
+    await db.insert(heartbeatRuns).values({ companyId: f.companyId, agentId: f.agentId, status: "running" });
+    const wake = await heartbeatService(db).wakeup(f.agentId, {
+      source: "automation", triggerDetail: "system", reason: "issue_commented",
+      requestedByActorType: "user", requestedByActorId: "board",
+      payload: { issueId: f.issueId, commentId: f.commentId },
+      contextSnapshot: { issueId: f.issueId, wakeCommentId: f.commentId },
+    });
+    expect(wake).toMatchObject({ agentId: f.agentId, status: "queued",
+      contextSnapshot: { forceFreshSession: true, previousRunId: f.sourceRunId,
+        explicitUserContinuation: { previousRunId: f.sourceRunId, commentId: f.commentId } } });
+    expect(await getExecutionBlocker(db, f.companyId, f.issueId)).toBeNull();
+    const [source] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.sourceRunId));
+    expect(source).toMatchObject({ status: "failed", agentId: f.previousAgentId });
+  });
+  it.each(["process_adapter", "native_source", "live_process", "agent_message", "old_comment"])(
+    "keeps a reassigned legacy hold for %s", async kind => {
+      const f = await seedLegacyHandoff(kind === "process_adapter" ? "process" : "claude_local");
+      if (kind === "native_source") await db.update(heartbeatRuns).set({ runtimeMode: "native", nativeIssueId: f.issueId })
+        .where(eq(heartbeatRuns.id, f.sourceRunId));
+      if (kind === "live_process") await db.update(heartbeatRuns).set({ processPid: process.pid }).where(eq(heartbeatRuns.id, f.sourceRunId));
+      if (kind === "agent_message") f.actorType = "agent";
+      if (kind === "old_comment") await db.update(issueComments).set({ createdAt: new Date("2026-09-11T09:00:00Z") })
+        .where(eq(issueComments.id, f.commentId));
+      expect(await admit(f)).toBeNull();
+      expect(await getExecutionBlocker(db, f.companyId, f.issueId)).not.toBeNull();
+    });
+  it("treats our plugin session adapters as conversation adapters, so their failures don't hold", async () => {
+    // Failed runs are stamped continue_conversation_v1 only for these types; without it a
+    // quota refusal became a permanent no-replay hold.
+    expect(isConversationAdapter("antigravity_local")).toBe(true);
+    expect(isConversationAdapter("zai_local")).toBe(true);
+    const f = await seedLegacyHandoff();
+    // Same agent, its own next message: admitted as a conversation turn, not a replay.
+    expect(await admit({ ...f, agentId: f.previousAgentId })).toBeNull(); // not the assignee
+    await db.update(issues).set({ assigneeAgentId: f.previousAgentId }).where(eq(issues.id, f.issueId));
+    expect(await admit({ ...f, agentId: f.previousAgentId })).toMatchObject({ previousRunId: f.sourceRunId });
   });
 
   it.each(["pause", "dependency", "state"])("keeps the existing %s gate on the actual user wake", async gate => {
