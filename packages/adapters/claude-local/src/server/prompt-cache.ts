@@ -158,6 +158,15 @@ export async function prepareClaudePromptBundle(input: {
     }
   }
 
+  // bu-fork: also makes the bundle a plugin. Managed AI connections run with
+  // `--setting-sources user`, which keeps project settings away from managed
+  // credentials but also ignores `.claude/skills` under `--add-dir`. Claude
+  // loads `--plugin-dir` skills regardless (see buildClaudeArgs in execute.ts).
+  await ensureReadableFile(
+    path.join(rootDir, ".claude-plugin", "plugin.json"),
+    `${JSON.stringify({ name: "paperclip", version: "1.0.0", skills: "./.claude/skills" })}\n`,
+  );
+
   const instructionsFilePath = instructionsContents
     ? path.join(rootDir, "agent-instructions.md")
     : null;
