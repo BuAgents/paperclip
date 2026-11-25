@@ -76,3 +76,24 @@ describe("enforceBudget", () => {
     expect(out.coverage.omittedMessageCount).toBe(60 - out.messages.length);
   });
 });
+
+// bu-fork: human names next to user IDs.
+describe("name fields survive the context budget", () => {
+  it("keeps authorName on messages and the resolver on interaction outcomes", () => {
+    const env = envelope(200, 2000, ["c199"]);
+    env.messages = env.messages.map((m) => ({ ...m, authorName: "Pierre Maciel" }));
+    env.interactionOutcomes = [{
+      id: "i1", kind: "request_confirmation", status: "accepted",
+      resolvedByUserId: "u1", resolvedByUserName: "Pierre Maciel", resolvedByAgentId: null,
+      result: "x".repeat(200_000),
+    }];
+    const out = enforceBudget(env, 20 * 1024);
+    expect(out.coverage.kind).toBe("truncated_task_history");
+    expect(out.messages.map((m) => m.id)).toContain("c199");
+    expect(out.messages.every((m) => m.authorName === "Pierre Maciel")).toBe(true);
+    expect(out.interactionOutcomes[0]).toMatchObject({
+      resolvedByUserId: "u1", resolvedByUserName: "Pierre Maciel", resolvedByAgentId: null,
+      result: "[omitted: context budget]",
+    });
+  });
+});

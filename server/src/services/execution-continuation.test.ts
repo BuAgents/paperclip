@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   agents,
+  authUsers,
   companies,
+  companyMemberships,
   createDb,
   heartbeatRuns,
   issueComments,
@@ -147,6 +149,53 @@ const support = await getEmbeddedPostgresTestSupport();
         expect(envelope.interactionOutcomes).toHaveLength(2);
       } finally { await db.delete(issueThreadInteractions).where(eq(issueThreadInteractions.id, answerId)); }
     });
+    // bu-fork: human names next to user IDs.
+    it("names humans and agents from the company directory and falls back to the ID", async () => {
+      const now = new Date();
+      const agentCommentId = randomUUID(), humanAnswerId = randomUUID(), agentAnswerId = randomUUID();
+      await db.insert(authUsers).values([
+        { id: "local-board", name: "Pierre Maciel", email: "pm@example.test", createdAt: now, updatedAt: now },
+        // Has an account but is no longer a member: must not be named.
+        { id: "another-user", name: "Removed Person", email: "rp@example.test", createdAt: now, updatedAt: now },
+      ]);
+      await db.insert(companyMemberships).values([
+        { companyId, principalType: "user", principalId: "local-board", status: "active" },
+        { companyId, principalType: "user", principalId: "another-user", status: "suspended" },
+      ]);
+      await db.insert(issueComments).values({ id: agentCommentId, companyId, issueId, authorType: "agent",
+        authorAgentId: agentId, body: "Working on it.", createdAt: new Date("2026-09-08T10:01:30Z") });
+      await db.insert(issueThreadInteractions).values([
+        { id: humanAnswerId, companyId, issueId, kind: "request_confirmation", status: "accepted",
+          resolvedByUserId: "local-board", resolvedAt: now,
+          payload: { version: 1, prompt: "Ship?" }, result: { version: 1, outcome: "accepted" } },
+        { id: agentAnswerId, companyId, issueId, kind: "request_confirmation", status: "rejected",
+          resolvedByAgentId: agentId, resolvedAt: now,
+          payload: { version: 1, prompt: "Ship?" }, result: { version: 1, outcome: "rejected" } },
+      ]);
+      try {
+        const envelope = await build();
+        const byId = new Map(envelope.messages.map((m) => [m.id, m]));
+        expect(byId.get(gmailId)).toMatchObject({ authorId: "local-board", authorName: "Pierre Maciel" });
+        expect(byId.get(laterId)).toMatchObject({ authorId: "another-user", authorName: null });
+        expect(byId.get(agentCommentId)).toMatchObject({ authorId: agentId, authorName: "Executor" });
+        expect(envelope.humanResponses).toEqual([expect.objectContaining({
+          id: humanAnswerId, resolvedByUserId: "local-board", resolvedByUserName: "Pierre Maciel" })]);
+        expect(envelope.interactionOutcomes).toEqual(expect.arrayContaining([
+          expect.objectContaining({ id: humanAnswerId, resolvedByUserId: "local-board",
+            resolvedByUserName: "Pierre Maciel", resolvedByAgentId: null }),
+          expect.objectContaining({ id: agentAnswerId, resolvedByUserId: null,
+            resolvedByUserName: null, resolvedByAgentId: agentId }),
+          expect.objectContaining({ id: interactionId, resolvedByUserId: null,
+            resolvedByUserName: null, resolvedByAgentId: null }),
+        ]));
+      } finally {
+        await db.delete(issueThreadInteractions).where(inArray(issueThreadInteractions.id, [humanAnswerId, agentAnswerId]));
+        await db.delete(issueComments).where(eq(issueComments.id, agentCommentId));
+        await db.delete(companyMemberships).where(eq(companyMemberships.companyId, companyId));
+        await db.delete(authUsers).where(inArray(authUsers.id, ["local-board", "another-user"]));
+      }
+    });
+
     it("carries completed work across an agent handoff using the interrupted run", async () => {
       const nextAgentId = randomUUID();
       await db.insert(agents).values({ id: nextAgentId, companyId, name: "Replacement", role: "engineer", adapterType: "paperclip_runner" });

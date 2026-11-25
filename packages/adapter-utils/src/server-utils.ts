@@ -580,6 +580,8 @@ type PaperclipWakeComment = {
   createdAt: string | null;
   authorType: string | null;
   authorId: string | null;
+  /** bu-fork: display name resolved server-side; null when unknown. */
+  authorName: string | null;
 };
 
 type PaperclipWakePlanReviewAuthor = {
@@ -944,6 +946,7 @@ function normalizePaperclipWakeComment(
     createdAt: asString(comment.createdAt, "").trim() || null,
     authorType: asString(author.type, "").trim() || null,
     authorId: asString(author.id, "").trim() || null,
+    authorName: asString(author.name, "").trim() || null,
   };
 }
 
@@ -3088,7 +3091,9 @@ function renderPaperclipWakePromptBody(
     lines.push(heading);
     for (const { index, comment } of comments) {
       const authorLabel = comment.authorId
-        ? `${comment.authorType ?? "unknown"} ${comment.authorId}`
+        ? comment.authorName
+          ? `${comment.authorType ?? "unknown"} ${comment.authorName} (${comment.authorId})`
+          : `${comment.authorType ?? "unknown"} ${comment.authorId}`
         : (comment.authorType ?? "unknown");
       lines.push(
         `${index + 1}. comment ${comment.id ?? "unknown"} at ${comment.createdAt ?? "unknown"} by ${authorLabel}`,

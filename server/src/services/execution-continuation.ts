@@ -17,6 +17,7 @@ import { queuedCommentIdsFromWakePayload } from "./issue-queued-comment-queue.js
 import { applyCompaction, CONTEXT_SOFT_LIMIT_BYTES, enforceBudget, envelopeBytes } from "./bu-context-budget.js";
 import { requestAutoCompaction } from "./bu-context-compaction.js";
 import { childReviewOutcomes } from "./native-runtime/child-review-outcomes.js";
+import { loadPrincipalNames } from "./bu-principal-names.js";
 
 const object = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v)
@@ -182,6 +183,11 @@ export async function buildExecutionContinuation(input: {
   // Missing source rows cannot silently become a claim of complete context.
   if (originCommentIds.some((id) => !rows.some((row) => row.id === id)))
     throw new Error("continuation_source_context_missing");
+  // bu-fork: one name lookup per envelope build (users + agents), never per row.
+  const names = await loadPrincipalNames(db, companyId, {
+    userIds: [...rows.map((row) => row.authorUserId), ...interactions.map((row) => row.resolvedByUserId)],
+    agentIds: rows.map((row) => row.authorAgentId),
+  });
   const messages = rows.map((row) => {
     const safe = input.exposeLowTrustRaw
       ? row
@@ -192,6 +198,7 @@ export async function buildExecutionContinuation(input: {
         row.authorType ??
         (row.authorUserId ? "user" : row.authorAgentId ? "agent" : "system"),
       authorId: row.authorUserId ?? row.authorAgentId,
+      authorName: row.authorUserId ? names.userName(row.authorUserId) : names.agentName(row.authorAgentId),
       createdByRunId: row.createdByRunId,
       body: row.deletedAt ? "" : safe.body,
       createdAt: row.createdAt.toISOString(),
@@ -363,7 +370,7 @@ export async function buildExecutionContinuation(input: {
     messages,
     humanResponses: interactions.flatMap(row => {
       const response = projectHumanInteractionResponse(row);
-      return response ? [response] : [];
+      return response ? [{ ...response, resolvedByUserName: names.userName(response.resolvedByUserId) }] : [];
     }),
     interactionOutcomes: [...interactions
       .filter((row) => row.status !== "pending")
@@ -371,6 +378,9 @@ export async function buildExecutionContinuation(input: {
         id: row.id,
         kind: row.kind,
         status: row.status,
+        resolvedByUserId: row.resolvedByUserId ?? null,
+        resolvedByUserName: row.resolvedByAgentId ? null : names.userName(row.resolvedByUserId),
+        resolvedByAgentId: row.resolvedByAgentId ?? null,
         result: row.result,
       })), ...await childReviewOutcomes(db, companyId, issueId)],
     // Low-trust evidence only: renderPaperclipWakePrompt removes completedWork
