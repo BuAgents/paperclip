@@ -56,7 +56,7 @@ case "${1:-}" in
     printf '%s\n' "$target_version" > "$backup/target-version.txt"
     printf '%s\n' "$(git -C "$repo" rev-parse HEAD)" > "$backup/fork-commit.txt"
     echo "Backup verified. Keep it until the cutover is accepted."
-    echo "If a later step fails, run: bash $repo/scripts/ops/BUD-1139-bump.sh --rollback $backup"
+    echo "If a later step fails, run: bash $repo/scripts/ops/fork-bump-1117.sh --rollback $backup"
     echo "Updating the managed install to $target_version"
     paperclipai update --version "$target_version" --yes
     echo "Applying the fork overlay"
@@ -66,7 +66,7 @@ case "${1:-}" in
       echo "The active CLI does not report $target_version" >&2
       exit 1
     fi
-    echo "Cutover passed. Rollback command: bash $repo/scripts/ops/BUD-1139-bump.sh --rollback $backup"
+    echo "Cutover passed. Rollback command: bash $repo/scripts/ops/fork-bump-1117.sh --rollback $backup"
     ;;
   --rollback)
     require_database_url
