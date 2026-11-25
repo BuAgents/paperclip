@@ -136,6 +136,7 @@ import {
   type BudgetEnforcementScope,
 } from "../budgets.js";
 import { terminateLocalService } from "../local-service-supervisor.js";
+import { persistedProcessGraceSec, resolvePersistedRunProcess, type HeartbeatRunProcessTarget } from "./bu-persisted-process-target.js";
 import { deriveCommentId } from "../../modules/run-dispatch/index.js";
 import { WakeQueueApplicationError } from "../../modules/wake-queue/index.js";
 import { isUuidLike } from "@paperclipai/shared";
@@ -1361,6 +1362,15 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
     const errorCode = options.errorCode ?? "cancelled";
     const cancellation = ((options.expectedStatus || committedBudgetCancellation) && run.resultJson?.startupCancellation
       ? readRunCancellation(run.resultJson) : null) ?? requestedRunCancellation(options.resultJson ?? {}, reason);
+    // bu-fork (BUD-796): without an in-memory handle or adapter control
+    // (external adapter plugins), fall back to the provider process persisted
+    // at spawn so Stop never leaves it running. Resolved before joining a
+    // pending Stop: no await may separate that join from registering ours.
+    const persistedProcess = run.runtimeMode !== "native" && !runningProcesses.has(run.id) &&
+      !adapterExecutionControls.has(run.id)
+      ? await resolvePersistedRunProcess(run, {
+          executing: activeRunExecutions.has(run.id), graceSec: persistedProcessGraceSec(agent) })
+      : null;
 
     const pendingProcessCancellation = processRunCancellationSettlements.get(
       run.id,
@@ -1377,6 +1387,9 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
         ? captureAdapterStopOwnership(run.id)
         : undefined;
     const control = stopOwnership?.control;
+    const processTarget: HeartbeatRunProcessTarget | null = running
+      ? { pid: running.child.pid ?? null, processGroupId: running.processGroupId, graceSec: running.graceSec }
+      : control ? null : persistedProcess; // bu-fork (BUD-796)
     // Capture the existing adapter owner before waiting on the run lock. Then
     // atomically fence preparation and refresh the selected runtime, so Stop
     // cannot miss a native handoff that won after its first read.
@@ -1427,7 +1440,7 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
       const processCancellationSettlement =
         run.runtimeMode !== "native" &&
         !control &&
-        running
+        processTarget
           ? {
               settled: new Promise<void>((resolve) => {
                 releaseProcessCancellation = resolve;
@@ -1498,15 +1511,15 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
                 throw error;
               }
             }
-            if (running) {
+            if (processTarget) {
               await terminateHeartbeatRunProcess({
-                pid: running.child.pid,
-                processGroupId: running.processGroupId,
+                pid: processTarget.pid,
+                processGroupId: processTarget.processGroupId,
                 // Codex handles Ctrl-C by cancelling its tool sessions. SIGTERM
                 // can leave commands in their separate process groups alive.
                 signal: !control && agent?.adapterType === "codex_local" ? "SIGINT" : undefined,
                 graceMs: cancellationTerminationGraceMs(
-                  running.graceSec,
+                  processTarget.graceSec,
                   options.terminationGraceMs,
                 ),
               });
@@ -1584,9 +1597,9 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
                       // A scheduler placeholder has no process to acknowledge.
                       // Preserve its normal release policy instead of treating
                       // it as an operator stop of provider work.
-                      ...(processCancellationSettlement && agent && running && (
-                        (Number.isInteger(running.child.pid) && (running.child.pid ?? 0) > 0) ||
-                        (Number.isInteger(running.processGroupId) && (running.processGroupId ?? 0) > 0)
+                      ...(processCancellationSettlement && agent && processTarget && (
+                        (Number.isInteger(processTarget.pid) && (processTarget.pid ?? 0) > 0) ||
+                        (Number.isInteger(processTarget.processGroupId) && (processTarget.processGroupId ?? 0) > 0)
                       )
                         ? mergeRunStopMetadataForAgent(agent, "cancelled", {
                             resultJson: {
