@@ -1510,7 +1510,6 @@ Terminal states: `done`, `cancelled`
 | GET    | `/api/companies/:companyId/costs/summary`    | Company cost summary               |
 | GET    | `/api/companies/:companyId/costs/by-agent`   | Costs by agent                     |
 | GET    | `/api/companies/:companyId/costs/by-project` | Costs by project                   |
-| GET    | `/api/companies/:companyId/costs/quota-windows/cached` | Last-known provider quota windows (cheap, no live calls; check before delegating to an agent whose provider may be exhausted) |
 | GET    | `/api/companies/:companyId/activity`         | Activity log                       |
 | GET    | `/api/companies/:companyId/dashboard`        | Company health summary             |
 
