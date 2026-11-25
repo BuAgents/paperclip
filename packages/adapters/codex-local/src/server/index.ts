@@ -58,6 +58,7 @@ export {
   readCodexToken,
   fetchCodexQuota,
   fetchCodexRpcQuota,
+  fetchCodexRpcModels,
   mapCodexRpcQuota,
   secondsToWindowLabel,
   fetchWithTimeout,
