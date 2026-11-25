@@ -11042,6 +11042,15 @@ registerCurrentRoute({
   summary: "List issue recovery actions",
 });
 
+// bu-fork: read-only "Automatic recovery stopped" diagnosis (routes/bu-recovery.ts).
+registerCurrentRoute({
+  method: "get",
+  path: "/api/issues/{id}/recovery-actions/{actionId}/diagnose",
+  tags: ["issues"],
+  summary: "Board only: prove a stopped run made no changes, and return the reconciliation to submit to recovery-actions/resolve",
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
 registerCurrentRoute({
   method: "post",
   path: "/api/issues/{id}/retry",
