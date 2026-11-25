@@ -9,7 +9,7 @@ Open items for `splitpierre/paperclip` (`bu/main`). Plans for larger items live 
 - [x] Port same-issue handoff wake, bounded continuation history, human names, plugin adapter continuation, Recovery Resume, and cached quota windows.
 - [x] Port CLI health check, lease-less setup token cleanup, merged-/usr sandbox handling, managed Claude plugin skills, and plugin process-group cancellation.
 - [x] Update the overlay scripts for the new base version.
-- [x] Adopt upstream context compaction and model catalog. Keep the wake-payload and replay-history bounds; preserve historical compaction data.
+- [x] Adopt upstream context compaction and model catalog. Keep the replay-history bound; upstream no longer sends wake context through the environment, so the old wake-payload E2BIG cap is obsolete. Preserve historical compaction data.
 - [ ] Rehearse the full migration and smoke checklist on a disposable database copy before live cutover.
 - [ ] Remove the host-only model catalog override after the human-run cutover.
 
