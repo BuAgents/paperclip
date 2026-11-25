@@ -120,7 +120,7 @@ export const chatEndpoints = pgTable(
     check("chat_endpoints_email_policy_check", sql`${table.provider} <> 'agentmail' or (${table.publicationMode} = 'explicit' and ${table.externalExecutionPolicy} = 'agent')`),
     check(
       "chat_endpoints_provider_check",
-      sql`${table.provider} in ('slack', 'github', 'discord', 'microsoft-teams', 'telegram', 'speko', 'agentmail', 'imessage-photon')`,
+      sql`${table.provider} in ('slack', 'github', 'discord', 'microsoft-teams', 'telegram', 'speko', 'agentmail', 'imessage-photon', 'whatsapp')`, // bu-fork: whatsapp
     ),
     check(
       "chat_endpoints_status_check",
@@ -162,6 +162,10 @@ export const chatEndpoints = pgTable(
     uniqueIndex("chat_endpoints_photon_number_uq")
       .on(table.botExternalId)
       .where(sql`${table.provider} = 'imessage-photon' and ${table.status} <> 'archived' and ${table.botExternalId} is not null`),
+    // bu-fork: one live WhatsApp channel per linked number (they would share one pairing).
+    uniqueIndex("chat_endpoints_whatsapp_number_uq")
+      .on(table.botExternalId)
+      .where(sql`${table.provider} = 'whatsapp' and ${table.status} <> 'archived' and ${table.botExternalId} is not null`),
     uniqueIndex("chat_endpoints_live_discord_bot_external_uq")
       .on(table.provider, table.botExternalId)
       .where(
@@ -286,7 +290,7 @@ export const chatExternalPrincipals = pgTable(
   (table) => [
     check(
       "chat_external_principals_provider_check",
-      sql`${table.provider} in ('slack', 'github', 'discord', 'microsoft-teams', 'telegram', 'speko', 'agentmail', 'imessage-photon')`,
+      sql`${table.provider} in ('slack', 'github', 'discord', 'microsoft-teams', 'telegram', 'speko', 'agentmail', 'imessage-photon', 'whatsapp')`, // bu-fork: whatsapp
     ),
     check(
       "chat_external_principals_kind_check",
