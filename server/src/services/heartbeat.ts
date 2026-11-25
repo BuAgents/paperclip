@@ -1,4 +1,5 @@
 import { registerHeldPreparationResumer } from "./interrupted-preparation-hold-settlement.js";
+import { hasDeferredHandoffWake } from "./heartbeat/bu-handoff-wake.js";
 import { resolveProviderApiPlacement } from "./native-runtime/provider-api-placement.js";
 import { isProcessRunAdmissionClosed } from "./heartbeat/run-admission.js";
 import type { StopInvocationOptions } from "./heartbeat/run-control.js";
@@ -4151,6 +4152,13 @@ export function heartbeatService(
           : releaseIssueExecutionAndPromote(latestRun, { suppressImmediateRecovery: true })).catch(err => {
           logger.error({ err, runId: run.id }, "failed to promote legacy comment queue after cleanup");
         });
+        // bu-fork (BUD-743): another agent's handoff wake parked behind this run's process.
+        else if (await hasDeferredHandoffWake(db, { companyId: run.companyId,
+          issueId: String(latestRun.contextSnapshot?.issueId), finishingAgentId: run.agentId })) {
+          await releaseIssueExecutionAndPromote(latestRun, { suppressImmediateRecovery: true }).catch(err => {
+            logger.error({ err, runId: run.id }, "failed to promote handoff wake after cleanup");
+          });
+        }
       }
       if (
         !nativeSessionResumeScheduled &&
