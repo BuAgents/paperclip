@@ -232,10 +232,10 @@ describeEmbeddedPostgres("cancelling a run whose process is not in runningProces
 
     expect(cancelled?.status).toBe("cancelled");
     expect(isProcessGroupAlive(run.processGroupId)).toBe(false);
+    await drainHeartbeatRunsToQuiescence(db, heartbeat);
     expect(
       await getConversationOwnershipBlocker(db, seeded.companyId, seeded.issueId),
     ).toBeNull();
-    await drainHeartbeatRunsToQuiescence(db, heartbeat);
     const [final] = await db
       .select()
       .from(heartbeatRuns)
