@@ -1373,6 +1373,7 @@ describe("Connectors landing page", () => {
       "slack",
       "speko",
       "telegram",
+      "whatsapp", // bu-fork
       "custom-mcp",
     ]);
     expect(
