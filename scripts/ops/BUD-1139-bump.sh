@@ -5,12 +5,13 @@
 #   bash scripts/ops/BUD-1139-bump.sh --dry-run
 #   bash scripts/ops/BUD-1139-bump.sh --apply
 #   bash scripts/ops/BUD-1139-bump.sh --rollback <BACKUP_DIR>
+#   bash scripts/ops/BUD-1139-bump.sh --rollback-db-only <BACKUP_DIR>
 #
 # Environment overrides:
 #   DATABASE_URL   Postgres connection string (default: embedded Postgres on 127.0.0.1:54329)
 #   BACKUP_ROOT    Directory for timestamped backups (default: ~/.paperclip/cli/bu-bump-backups)
 #   HEALTH_URL     Health endpoint URL (default: http://127.0.0.1:3100/api/health)
-#   PG_DOCKER_IMG  Fallback Docker image when pg_dump/pg_restore are not on PATH (default: postgres:18)
+#   PG_DOCKER_IMG  Fallback Docker image when pg_dump/pg_restore/psql are not on PATH (default: postgres:18)
 set -euo pipefail
 umask 077
 
@@ -24,7 +25,7 @@ SERVICE_NAME="${PAPERCLIP_SYSTEMD_SERVICE:-paperclipai.service}"
 export PATH="$HOME/.local/bin:/home/linuxbrew/.linuxbrew/bin:$PATH"
 
 usage() {
-  echo "Usage: $0 --dry-run | --apply | --rollback BACKUP_DIR" >&2
+  echo "Usage: $0 --dry-run | --apply | --rollback BACKUP_DIR | --rollback-db-only BACKUP_DIR" >&2
   exit 2
 }
 
@@ -54,12 +55,43 @@ check_lockfile_sync() {
 }
 
 pg_tool_mode() {
-  if command -v pg_dump >/dev/null 2>&1 && command -v pg_restore >/dev/null 2>&1; then
+  if command -v pg_dump >/dev/null 2>&1 && command -v pg_restore >/dev/null 2>&1 && command -v psql >/dev/null 2>&1; then
     echo "native"
   elif command -v docker >/dev/null 2>&1; then
     echo "docker:$PG_DOCKER_IMG"
   else
     echo "missing"
+  fi
+}
+
+parse_db_url() {
+  local field="$1"
+  node -e '
+    const u = new URL(process.argv[1]);
+    const field = process.argv[2];
+    const dbName = decodeURIComponent(u.pathname.replace(/^\/+/, "")) || "paperclip";
+    const dbOwner = decodeURIComponent(u.username || "") || "paperclip";
+    if (field === "name") {
+      process.stdout.write(dbName);
+    } else if (field === "owner") {
+      process.stdout.write(dbOwner);
+    } else if (field === "admin_url") {
+      u.pathname = "/postgres";
+      process.stdout.write(u.toString());
+    } else {
+      process.exit(1);
+    }
+  ' "$DB_URL" "$field"
+}
+
+run_psql() {
+  local conn_url="$1"
+  shift
+  if command -v psql >/dev/null 2>&1; then
+    psql "$conn_url" -v ON_ERROR_STOP=1 "$@"
+  else
+    docker run --rm --network host "$PG_DOCKER_IMG" \
+      psql "$conn_url" -v ON_ERROR_STOP=1 "$@"
   fi
 }
 
@@ -92,14 +124,32 @@ run_pg_restore_list() {
 
 run_pg_restore() {
   local dump_file="$1"
-  local dump_dir dump_base
+  local dump_dir dump_base admin_url db_name db_owner
   dump_dir="$(dirname "$dump_file")"
   dump_base="$(basename "$dump_file")"
+  admin_url="$(parse_db_url admin_url)"
+  db_name="$(parse_db_url name)"
+  db_owner="$(parse_db_url owner)"
+
+  if [[ ! "$db_name" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]] || [[ ! "$db_owner" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]; then
+    echo "ERROR: Unsafe database name ('$db_name') or owner ('$db_owner') parsed from DATABASE_URL." >&2
+    return 1
+  fi
+  if [ "$db_name" = "postgres" ] || [ "$db_name" = "template0" ] || [ "$db_name" = "template1" ]; then
+    echo "ERROR: Refusing to drop system database '$db_name'." >&2
+    return 1
+  fi
+
+  echo "Recreating empty database \"$db_name\" (owner \"$db_owner\") via admin DB 'postgres'..."
+  run_psql "$admin_url" -c "DROP DATABASE IF EXISTS \"$db_name\" WITH (FORCE);"
+  run_psql "$admin_url" -c "CREATE DATABASE \"$db_name\" OWNER \"$db_owner\";"
+
+  echo "Restoring archive into empty database \"$db_name\"..."
   if command -v pg_restore >/dev/null 2>&1; then
-    pg_restore --clean --if-exists --no-owner --no-privileges --dbname "$DB_URL" "$dump_file"
+    pg_restore --exit-on-error --no-owner --no-privileges --dbname "$DB_URL" "$dump_file"
   else
     docker run --rm --network host -v "$dump_dir:/backup:ro" "$PG_DOCKER_IMG" \
-      pg_restore --clean --if-exists --no-owner --no-privileges --dbname "$DB_URL" "/backup/$dump_base"
+      pg_restore --exit-on-error --no-owner --no-privileges --dbname "$DB_URL" "/backup/$dump_base"
   fi
 }
 
@@ -149,7 +199,7 @@ case "${1:-}" in
     step "Rollback plan"
     echo "[dry-run] Rollback command:"
     echo "          bash $REPO/scripts/ops/BUD-1139-bump.sh --rollback $BACKUP_ROOT/<timestamp>"
-    echo "          (stops $SERVICE_NAME, restores overlay/previous managed install, runs pg_restore --clean --if-exists, restarts service, checks $HEALTH_URL)"
+    echo "          (stops $SERVICE_NAME, flips managed install back via paperclipai update --rollback, drops/recreates DB and runs pg_restore --exit-on-error --no-owner --no-privileges, restarts service, checks $HEALTH_URL)"
     ;;
 
   --apply)
@@ -220,7 +270,7 @@ case "${1:-}" in
 
     step "Rollback 3/5: Restoring previous managed install / overlay files"
     if [ -L "$HOME/.paperclip/cli/overlay-backups/current" ]; then
-      echo "Overlay backup detected; rolling back managed payload first."
+      echo "Overlay backup detected; no separate overlay restore is needed because 'paperclipai update --rollback' flips back to the previous managed payload, which still has its original overlay."
     fi
     if [[ "$(paperclipai --version 2>/dev/null || true)" == *"$TARGET_VERSION"* ]]; then
       echo "Flipping managed install back with: paperclipai update --rollback"
@@ -238,6 +288,26 @@ case "${1:-}" in
     touch "$backup/rolled-back"
     echo ""
     echo "Rollback succeeded. Restored from: $backup"
+    ;;
+
+  --rollback-db-only)
+    backup="${2:-}"
+    [ -n "$backup" ] && [ -f "$backup/database.dump" ] || usage
+
+    step "Rollback DB-only 1/2: Preflight checks and backup verification (skipping systemctl & paperclipai)"
+    command -v node >/dev/null 2>&1 || { echo "ERROR: required command 'node' not found on PATH." >&2; exit 1; }
+    pg_mode="$(pg_tool_mode)"
+    if [ "$pg_mode" = "missing" ]; then
+      echo "ERROR: neither pg_restore/psql nor docker is available on PATH." >&2
+      exit 1
+    fi
+    run_pg_restore_list "$backup/database.dump"
+    echo "Backup archive verified ($pg_mode)."
+
+    step "Rollback DB-only 2/2: Recreating database and restoring from $backup/database.dump"
+    run_pg_restore "$backup/database.dump"
+    echo ""
+    echo "DB-only rollback succeeded. Restored from: $backup"
     ;;
 
   *)
