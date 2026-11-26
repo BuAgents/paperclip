@@ -124,6 +124,24 @@ describe("setup-token reaper", () => {
     expect(store.rows.size).toBe(0);
   });
 
+  it("clears a reapable record with no lease (toCleanupRecord's null -> \"\" mapping) without calling release", async () => {
+    // A session that never reached lease acquisition before going terminal
+    // has no providerLeaseId; toCleanupRecord maps that to "". Calling
+    // releaseById("") would reach the database as an empty-string uuid
+    // lookup and fail forever instead of ever clearing the row.
+    const store = createMemoryStore();
+    store.seed({ sessionId: "no-lease-1", leaseId: "", state: "failed" });
+    const leases = createFakeLeases();
+    const reaper = createSetupTokenReaper({ store, leases, now: () => NOW });
+
+    const result = await reaper.sweep();
+
+    expect(result.released).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(leases.releaseByIdCalls).toHaveLength(0);
+    expect(store.rows.size).toBe(0);
+  });
+
   it("reaps every reapable record in one sweep and stays idempotent on the next", async () => {
     const store = createMemoryStore();
     store.seed({ sessionId: "orphan-a", leaseId: "lease-a", state: "failed" });

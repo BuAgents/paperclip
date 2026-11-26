@@ -1,6 +1,7 @@
 import { createTeamsDestinationAdmission } from "../microsoft-teams/destination-admission.js";
 import { createTelegramDestinationAdmission } from "../telegram/destination-admission.js";
 import { createPhotonDestinationAdmission } from "../imessage-photon/destination-admission.js";
+import { admitWhatsappGroupDestination } from "../../whatsapp/channel.js"; // bu-fork
 
 import { deliveryContentWasRedacted } from "./delivery-ledger.js";
 
@@ -165,6 +166,10 @@ export function createInboundAdmission(db: Db, options: InboundAdmissionOptions)
       ) {
         destinationAccepting = await admitPhotonDestination({ endpoint, currentEndpoint, thread }, tx);
       }
+      // bu-fork: WhatsApp groups answer only once enabled.
+      if (endpointAccepting && endpoint.provider === "whatsapp" && !thread.isDM) {
+        destinationAccepting = await admitWhatsappGroupDestination({ endpoint, currentEndpoint, thread, ensureResource }, tx);
+      }
       const mentionRequired =
         endpoint.provider === "slack" &&
         currentEndpoint.requireAtMention &&
@@ -194,7 +199,8 @@ export function createInboundAdmission(db: Db, options: InboundAdmissionOptions)
         (!thread.isDM &&
           (endpoint.provider === "microsoft-teams" ||
             endpoint.provider === "telegram" ||
-            endpoint.provider === "imessage-photon") &&
+            endpoint.provider === "imessage-photon" ||
+            endpoint.provider === "whatsapp" /* bu-fork */) &&
           (!accepting || provisionalTeamsSetupReply));
       const ignoredAt = accepting ? null : new Date();
       const inactiveReason = !endpointAccepting

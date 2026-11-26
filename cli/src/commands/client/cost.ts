@@ -32,6 +32,7 @@ export function registerCostCommands(program: Command): void {
     ["by-project", "costs/by-project"],
     ["window-spend", "costs/window-spend"],
     ["quota-windows", "costs/quota-windows"],
+    ["quota-windows-cached", "costs/quota-windows/cached"], // bu-fork
   ] as const) {
     addCompanyGet(cost, name, `Get ${name} cost data`, path);
   }

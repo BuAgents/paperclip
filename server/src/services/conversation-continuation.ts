@@ -7,9 +7,15 @@ import { hasRemoteTerminationReceipt } from "./remote-execution-termination.js";
 
 // These adapters accept a conversation turn. Retrying a process or webhook can
 // replay the action itself, so those adapters retain their recovery contract.
+// bu-fork: our plugin adapters (bu-paperclip-adapters) are session CLIs too —
+// agy resumes with --conversation, zai_local is Claude Code on Z.ai. Left off
+// this list, every failure of theirs (even a 429 quota refusal) became a
+// permanent no-replay hold that no comment, reassignment or Resume could clear
+// (BUD-357, BUD-365, BUD-392, BUD-92, BUD-103).
 export const CONVERSATION_ADAPTER_TYPES = [
   "claude_local", "codex_local", "cursor", "gemini_local", "opencode_local",
   "pi_local", "grok_local", "kimi_local", "hermes_local",
+  "antigravity_local", "zai_local",
 ] as const;
 
 export function isConversationAdapter(adapterType: string): boolean {

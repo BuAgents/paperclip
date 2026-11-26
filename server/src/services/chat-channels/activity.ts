@@ -1,3 +1,4 @@
+import { photonLikeConversation } from "../whatsapp/channel.js"; // bu-fork
 import { connectionManagementService, type ConnectionManagementContext } from "../connection-management.js";
 import { providerEffectPayload } from "./provider-effects.js";
 
@@ -147,7 +148,7 @@ export function createChatActivity(db: Db, options: ChatActivityOptions) {
         issueTitle: issue?.title ?? null,
         isDirectMessage: conversation.isDirectMessage,
         state:
-          record.endpoint.provider !== "imessage-photon" &&
+          !photonLikeConversation(record.endpoint.provider) && // bu-fork: whatsapp
           (issue?.status === "done" || issue?.status === "cancelled")
             ? "completed"
             : conversation.state,

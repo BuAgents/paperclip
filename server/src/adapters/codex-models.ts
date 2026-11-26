@@ -1,5 +1,6 @@
 import type { AdapterModel } from "./types.js";
 import { models as codexFallbackModels } from "@paperclipai/adapter-codex-local";
+import { fetchCodexRpcModels } from "@paperclipai/adapter-codex-local/server";
 import { readConfigFile } from "../config-file.js";
 
 const OPENAI_MODELS_ENDPOINT = "https://api.openai.com/v1/models";
@@ -70,19 +71,35 @@ async function fetchOpenAiModels(apiKey: string): Promise<AdapterModel[]> {
   }
 }
 
+// bu-fork: session-based live source, used when there's no platform API key -- the
+// common case, since codex_local's primary auth is the ChatGPT/device-login session
+// (a whole separate flow exists specifically so an API key isn't required). Confirmed
+// against the real app-server protocol (`codex app-server generate-json-schema`):
+// `model/list` works off that same session, independent of OPENAI_API_KEY. Previously
+// this branch was never even attempted -- "Refresh" silently returned the identical
+// static, package-bundled list every time for any agent without an API key.
+const RPC_MODELS_CACHE_FINGERPRINT = "codex-rpc-session";
+
+async function fetchRpcModels(): Promise<AdapterModel[]> {
+  try {
+    return dedupeModels(await fetchCodexRpcModels());
+  } catch {
+    return [];
+  }
+}
+
 async function loadCodexModels(options?: { forceRefresh?: boolean }): Promise<AdapterModel[]> {
   const forceRefresh = options?.forceRefresh === true;
   const apiKey = resolveOpenAiApiKey();
   const fallback = dedupeModels(codexFallbackModels);
-  if (!apiKey) return fallback;
+  const keyFingerprint = apiKey ? fingerprint(apiKey) : RPC_MODELS_CACHE_FINGERPRINT;
 
   const now = Date.now();
-  const keyFingerprint = fingerprint(apiKey);
   if (!forceRefresh && cached && cached.keyFingerprint === keyFingerprint && cached.expiresAt > now) {
     return cached.models;
   }
 
-  const fetched = await fetchOpenAiModels(apiKey);
+  const fetched = apiKey ? await fetchOpenAiModels(apiKey) : await fetchRpcModels();
   if (fetched.length > 0) {
     const merged = mergedWithFallback(fetched);
     cached = {

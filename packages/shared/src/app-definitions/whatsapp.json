@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "slug": "whatsapp",
+  "name": "WhatsApp",
+  "description": "Chat with a Paperclip agent on WhatsApp, from a number linked to this server as a WhatsApp device. Direct messages and mention-only groups.",
+  "categories": [
+    "communication"
+  ],
+  "featured": false,
+  "branding": {
+    "logoUrl": "/brands/apps/whatsapp.svg"
+  },
+  "urlPatterns": [],
+  "methods": [
+    {
+      "key": "chat-agent",
+      "label": "Chat with an agent",
+      "purpose": "channel",
+      "provider": "whatsapp",
+      "transport": "chat_sdk",
+      "auth": "api_key",
+      "ownershipModes": [
+        "customer"
+      ],
+      "whenToUse": "Talk to one Paperclip agent from WhatsApp: linked people in direct messages, and enabled groups when the agent is mentioned.",
+      "credentialFields": [
+        {
+          "key": "authDir",
+          "label": "Credentials folder",
+          "type": "text",
+          "required": true,
+          "placeholder": "/data/secrets/whatsapp/auth",
+          "secret": false
+        }
+      ],
+      "guidanceMd": "Pair the WhatsApp number once on the server with `node scripts/bu/whatsapp-pair.mjs` (WhatsApp → Linked devices → Link a device), then enter the folder it wrote. Only linked people get answers; groups must be enabled and answer only when the agent is @mentioned or replied to.",
+      "riskTier": "S3",
+      "requiredResourceFilters": [
+        "direct_message",
+        "group_chat"
+      ]
+    }
+  ]
+}

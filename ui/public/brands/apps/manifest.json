@@ -635,6 +635,12 @@
       "localAsset": "/brands/apps/speko.svg"
     },
     {
+      "slug": "whatsapp",
+      "provider": "WhatsApp",
+      "catalogVisible": true,
+      "localAsset": "/brands/apps/whatsapp.svg"
+    },
+    {
       "slug": "calendly",
       "provider": "Calendly",
       "catalogVisible": true,

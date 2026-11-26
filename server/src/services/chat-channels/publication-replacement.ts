@@ -79,6 +79,7 @@ export function createChatPublicationReplacement(db: Db, options: ChatPublicatio
     if (typingReason) {
       const endpoint = await endpointRecord(publication.endpointId);
       if (endpoint?.endpoint.provider === "imessage-photon") return typingReason;
+      if (endpoint?.endpoint.provider === "whatsapp") return "WhatsApp uses typing instead of progress bubbles"; // bu-fork
     }
     if (
       !progress ||

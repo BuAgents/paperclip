@@ -15,6 +15,7 @@ const ROUTES_DIR = path.resolve(__dirname, "../routes");
 
 const apiPrefixes: Record<string, string> = {
   "cases.ts": "/api",
+  "bu-recovery.ts": "/api",
   "case-handoffs.ts": "/api",
   "workflows.ts": "/api",
   "smoke-lab.ts": "/api",
@@ -99,6 +100,7 @@ const apiPrefixes: Record<string, string> = {
   "tool-gateway.ts": "/api",
   "user-profiles.ts": "/api",
   "workspace-preferences.ts": "/api",
+  "bu-transcribe.ts": "/api", // bu-fork
 };
 
 const ROUTE_LITERAL_PATTERN =
@@ -848,7 +850,7 @@ describe("openapi routes", () => {
         properties: {
           provider: {
             type: "string",
-            enum: ["slack", "github", "discord", "microsoft-teams", "telegram", "speko", "imessage-photon"],
+            enum: ["slack", "github", "discord", "microsoft-teams", "telegram", "speko", "imessage-photon", "whatsapp"], // bu-fork: whatsapp
           },
           assignedAgentId: { type: "string", format: "uuid" },
         },

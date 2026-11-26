@@ -1,0 +1,463 @@
+// bu-fork: WhatsApp channel provider (Baileys, as a linked device).
+//
+// A standard Chat SDK adapter whose inbound side is a long-lived WhatsApp Web
+// socket instead of webhooks. The device is paired once, out of band, with
+// scripts/bu/whatsapp-pair.mjs into a Baileys multi-file auth directory; this
+// adapter only logs in with it and never pairs (it stops on a QR request).
+//
+// Group rule: in a group, only messages that @mention the bot or reply to it
+// reach Paperclip. Everything else in the group is dropped here, so follow-ups
+// never become "subscribed" turns without an explicit mention.
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import makeWASocket, {
+  Browsers,
+  DisconnectReason,
+  downloadContentFromMessage,
+  fetchLatestWaWebVersion,
+  normalizeMessageContent,
+  useMultiFileAuthState,
+  type WAMessage,
+  type WASocket,
+} from "baileys";
+import pino from "pino";
+import {
+  Message,
+  parseMarkdown,
+  stringifyMarkdown,
+  type Adapter,
+  type AdapterPostableMessage,
+  type ChatInstance,
+  type FetchOptions,
+  type FormattedContent,
+  type ThreadInfo,
+  type Attachment,
+} from "chat";
+import { formatDuration, transcribeAudio } from "../bu-transcriber.js";
+import { MAX_ATTACHMENT_BYTES } from "../../attachment-types.js";
+import {
+  addressesBot,
+  jidUser,
+  markdownToWhatsapp,
+  parseWhatsappThreadId,
+  splitWhatsappText,
+  stripBotMentions,
+  whatsappSender,
+  whatsappThreadId,
+  type ContextInfoLike,
+} from "./format.js";
+
+/**
+ * Enough to download and decrypt one WhatsApp image later (durable intake
+ * processes messages after the socket event). mediaKey decrypts only this file.
+ */
+export interface WhatsappMediaLocator {
+  kind: "whatsapp_media";
+  chatJid: string;
+  messageId: string;
+  url: string;
+  directPath: string;
+  mediaKey: string; // base64
+  mimeType: string;
+  size: number | null;
+}
+
+export function parseWhatsappMediaLocator(value: unknown): WhatsappMediaLocator | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  const str = (k: string, max = 4096) => (typeof v[k] === "string" && (v[k] as string).length > 0 && (v[k] as string).length <= max ? (v[k] as string) : null);
+  const chatJid = str("chatJid", 200), messageId = str("messageId", 200), url = str("url"), directPath = str("directPath"),
+    mediaKey = str("mediaKey", 200), mimeType = str("mimeType", 120);
+  if (v.kind !== "whatsapp_media" || !chatJid || !messageId || !url || !directPath || !mediaKey || !mimeType) return null;
+  if (!url.startsWith("https://") || !/^image\//.test(mimeType)) return null;
+  const size = typeof v.size === "number" && Number.isSafeInteger(v.size) && v.size >= 0 ? v.size : null;
+  return { kind: "whatsapp_media", chatJid, messageId, url, directPath, mediaKey, mimeType, size };
+}
+
+export async function downloadWhatsappMedia(locator: WhatsappMediaLocator): Promise<Buffer> {
+  const stream = await downloadContentFromMessage(
+    { url: locator.url, directPath: locator.directPath, mediaKey: Buffer.from(locator.mediaKey, "base64") },
+    "image",
+  );
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of stream) {
+    total += chunk.length;
+    if (total > MAX_ATTACHMENT_BYTES) throw new Error("WhatsApp image exceeds the attachment size limit");
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
+export type WhatsappRaw = {
+  key: { id: string; remoteJid: string };
+  image?: WhatsappMediaLocator | null;
+  senderId: string;
+  pushName: string | null;
+  text: string;
+  isGroup: boolean;
+  isMention: boolean;
+  timestamp: number;
+};
+
+export class WhatsappError extends Error {
+  constructor(
+    readonly code: "not_paired" | "logged_out" | "replaced" | "network",
+    message: string,
+  ) {
+    super(message);
+    this.name = "WhatsappError";
+  }
+}
+
+export interface WhatsappReceiverCallbacks {
+  connected(): Promise<void>;
+  failure(error: WhatsappError): Promise<void>;
+}
+
+const MAX_BACKOFF_MS = 60_000;
+
+function textOf(message: AdapterPostableMessage): string {
+  if (typeof message === "string") return message;
+  if ("markdown" in message) return message.markdown;
+  if ("raw" in message) return message.raw;
+  if ("ast" in message) return stringifyMarkdown(message.ast);
+  if ("fallbackText" in message) return message.fallbackText ?? "";
+  return "";
+}
+
+function whatsappImageAttachment(locator: WhatsappMediaLocator): Attachment {
+  const ext = locator.mimeType.split("/")[1]?.split(";")[0]?.replace(/[^a-z0-9]/g, "") || "jpg";
+  return {
+    type: "image",
+    name: `whatsapp-image.${ext}`,
+    mimeType: locator.mimeType,
+    size: locator.size ?? undefined,
+    fetchMetadata: { ...locator, size: locator.size === null ? "" : String(locator.size) },
+    fetchData: () => downloadWhatsappMedia(locator),
+  } as Attachment;
+}
+
+export class WhatsappChatAdapter implements Adapter<{ chatJid: string; isGroup: boolean }, WhatsappRaw> {
+  readonly name = "whatsapp";
+  readonly lockScope = "channel" as const;
+  readonly botUserId: string;
+  private chat: ChatInstance | null = null;
+  private socket: WASocket | null = null;
+  private connected = false;
+  private stopped = true;
+  private attempt = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private callbacks: WhatsappReceiverCallbacks | null = null;
+  private botUsers: string[] = [];
+  private readonly typing = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly names = new Map<string, string>();
+  private readonly seen = new Set<string>();
+
+  constructor(
+    readonly userName: string,
+    readonly authDir: string,
+    phoneNumber: string,
+  ) {
+    this.botUserId = phoneNumber;
+  }
+
+  async initialize(chat: ChatInstance): Promise<void> {
+    this.chat = chat;
+  }
+
+  /** Only the process that owns the endpoint's receiver lease connects. */
+  async startReceiver(callbacks: WhatsappReceiverCallbacks): Promise<void> {
+    this.callbacks = callbacks;
+    this.stopped = false;
+    this.attempt = 0;
+    await this.connect();
+  }
+
+  async disconnect(): Promise<void> {
+    this.stopped = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    for (const timer of this.typing.values()) clearTimeout(timer);
+    this.typing.clear();
+    // end() closes the websocket. Never logout(): that would unlink the device.
+    this.socket?.end(undefined);
+    this.socket = null;
+    this.connected = false;
+  }
+
+  private async fail(error: WhatsappError): Promise<void> {
+    await this.callbacks?.failure(error).catch(() => undefined);
+  }
+
+  private async connect(): Promise<void> {
+    if (this.stopped) return;
+    if (!existsSync(join(this.authDir, "creds.json"))) {
+      this.stopped = true;
+      return this.fail(new WhatsappError("not_paired", `No WhatsApp pairing found in ${this.authDir}. Pair with scripts/bu/whatsapp-pair.mjs.`));
+    }
+    const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+    if (!state.creds.me?.id) {
+      this.stopped = true;
+      return this.fail(new WhatsappError("not_paired", "The WhatsApp credentials folder has no paired device."));
+    }
+    this.botUsers = [jidUser(state.creds.me.id), jidUser(state.creds.me.lid ?? "")].filter(Boolean);
+    const { version } = await fetchLatestWaWebVersion({});
+    const socket = makeWASocket({
+      auth: state,
+      version,
+      browser: Browsers.ubuntu("Chrome"),
+      syncFullHistory: false,
+      markOnlineOnConnect: false,
+      logger: pino({ level: "silent" }),
+    });
+    this.socket = socket;
+    socket.ev.on("creds.update", saveCreds);
+    socket.ev.on("connection.update", (update) => {
+      if (socket !== this.socket) return;
+      if (update.qr) {
+        // The stored identity was rejected. Never relay a QR; stop and report.
+        this.stopped = true;
+        socket.end(undefined);
+        this.socket = null;
+        void this.fail(new WhatsappError("not_paired", "WhatsApp asked for a new pairing. Pair again with scripts/bu/whatsapp-pair.mjs."));
+        return;
+      }
+      if (update.connection === "open") {
+        this.attempt = 0;
+        this.connected = true;
+        void this.callbacks?.connected().catch(() => undefined);
+        return;
+      }
+      if (update.connection === "close") {
+        this.connected = false;
+        this.socket = null;
+        const code = (update.lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)?.output?.statusCode;
+        if (code === DisconnectReason.loggedOut) {
+          this.stopped = true;
+          void this.fail(new WhatsappError("logged_out", "The device was unlinked from WhatsApp. Pair again with scripts/bu/whatsapp-pair.mjs."));
+          return;
+        }
+        if (code === DisconnectReason.connectionReplaced) {
+          this.stopped = true;
+          void this.fail(new WhatsappError("replaced", "Another process connected with these WhatsApp credentials. Stop it, then reconnect."));
+          return;
+        }
+        this.scheduleReconnect(code);
+      }
+    });
+    socket.ev.on("messages.upsert", ({ messages, type }) => {
+      if (type !== "notify") return;
+      for (const message of messages) void this.receive(message);
+    });
+  }
+
+  private scheduleReconnect(code: number | undefined): void {
+    if (this.stopped) return;
+    const delay = code === DisconnectReason.restartRequired ? 0 : Math.min(1000 * 2 ** this.attempt, MAX_BACKOFF_MS);
+    this.attempt += 1;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect().catch(() => this.scheduleReconnect(undefined));
+    }, delay);
+    this.reconnectTimer.unref?.();
+  }
+
+  private async receive(message: WAMessage): Promise<void> {
+    if (!this.chat || message.key.fromMe || !message.message || !message.key.id) return;
+    if (this.seen.has(message.key.id)) return;
+    this.seen.add(message.key.id);
+    if (this.seen.size > 2000) this.seen.delete(this.seen.values().next().value!);
+    const sender = whatsappSender(message.key);
+    if (!sender) return;
+    const content = normalizeMessageContent(message.message);
+    if (!content || content.protocolMessage || content.reactionMessage) return;
+    let text =
+      content.conversation ??
+      content.extendedTextMessage?.text ??
+      content.imageMessage?.caption ??
+      content.videoMessage?.caption ??
+      content.documentMessage?.caption ??
+      null;
+    const context: ContextInfoLike | null =
+      content.extendedTextMessage?.contextInfo ??
+      content.imageMessage?.contextInfo ??
+      content.videoMessage?.contextInfo ??
+      content.documentMessage?.contextInfo ??
+      content.audioMessage?.contextInfo ??
+      null;
+    const isMention = sender.isGroup ? addressesBot(context, this.botUsers) : false;
+    // Groups answer only when addressed; nothing else from a group reaches Paperclip.
+    if (sender.isGroup && !isMention) return;
+    if (message.pushName) this.names.set(sender.senderId, message.pushName);
+    let image: WhatsappMediaLocator | null = null;
+    const img = content.imageMessage;
+    if (img?.url && img.directPath && img.mediaKey) {
+      image = {
+        kind: "whatsapp_media", chatJid: sender.chatJid, messageId: message.key.id,
+        url: img.url, directPath: img.directPath, mediaKey: Buffer.from(img.mediaKey).toString("base64"),
+        mimeType: img.mimetype || "image/jpeg", size: img.fileLength ? Number(img.fileLength) : null,
+      };
+      text = text ?? "";
+    }
+    if (content.audioMessage) text = await this.transcribeVoiceNote(message);
+    const raw: WhatsappRaw = {
+      key: { id: message.key.id, remoteJid: sender.chatJid },
+      image,
+      senderId: sender.senderId,
+      pushName: message.pushName ?? null,
+      text: text === null ? "[Unsupported WhatsApp message: only text is supported]" : stripBotMentions(text, this.botUsers),
+      isGroup: sender.isGroup,
+      isMention,
+      timestamp: Number(message.messageTimestamp ?? Math.floor(Date.now() / 1000)),
+    };
+    const threadId = whatsappThreadId(sender.chatJid);
+    await this.chat.processMessage(this, threadId, this.parseMessage(raw));
+  }
+
+  /** Voice notes become text before they reach Paperclip (local Whisper). */
+  private async transcribeVoiceNote(message: WAMessage): Promise<string> {
+    const audio = normalizeMessageContent(message.message)?.audioMessage;
+    const seconds = audio?.seconds ? Number(audio.seconds) : null;
+    const label = `Voice note${seconds ? ` (${formatDuration(seconds)})` : ""}`;
+    try {
+      if (!audio?.url || !audio.directPath || !audio.mediaKey) throw new Error("missing media");
+      const stream = await downloadContentFromMessage(
+        { url: audio.url, directPath: audio.directPath, mediaKey: audio.mediaKey },
+        "audio",
+      );
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) chunks.push(chunk as Buffer);
+      const transcript = await transcribeAudio(Buffer.concat(chunks), "ogg");
+      return transcript.text ? `🎤 ${label}, transcribed: ${transcript.text}` : `🎤 ${label}: [no speech detected]`;
+    } catch {
+      return `🎤 ${label}: [could not be transcribed]`;
+    }
+  }
+
+  encodeThreadId(value: { chatJid: string }): string {
+    return whatsappThreadId(value.chatJid);
+  }
+  decodeThreadId(id: string) {
+    return parseWhatsappThreadId(id);
+  }
+  channelIdFromThreadId(id: string): string {
+    parseWhatsappThreadId(id);
+    return id;
+  }
+  isDM(id: string): boolean {
+    return !parseWhatsappThreadId(id).isGroup;
+  }
+
+  parseMessage(raw: WhatsappRaw): Message<WhatsappRaw> {
+    const threadId = whatsappThreadId(raw.key.remoteJid);
+    const name = raw.pushName ?? (raw.senderId.startsWith("lid:") ? raw.senderId : `+${raw.senderId}`);
+    return new Message({
+      id: raw.key.id,
+      threadId,
+      text: raw.text,
+      formatted: parseMarkdown(raw.text),
+      raw,
+      attachments: raw.image ? [whatsappImageAttachment(raw.image)] : [],
+      author: {
+        userId: `whatsapp:${raw.senderId}`,
+        userName: raw.senderId,
+        fullName: name,
+        isBot: false,
+        isMe: false,
+        isSystem: false,
+      },
+      metadata: { dateSent: new Date(raw.timestamp * 1000), edited: false },
+      isMention: raw.isMention,
+    } as ConstructorParameters<typeof Message<WhatsappRaw>>[0]);
+  }
+
+  async fetchThread(id: string): Promise<ThreadInfo> {
+    const { chatJid, isGroup } = parseWhatsappThreadId(id);
+    let channelName = isGroup ? chatJid : `+${jidUser(chatJid)}`;
+    if (isGroup && this.socket && this.connected) {
+      const meta = await this.socket.groupMetadata(chatJid).catch(() => null);
+      if (meta?.subject) channelName = meta.subject;
+    } else if (!isGroup) {
+      channelName = this.names.get(jidUser(chatJid)) ?? channelName;
+    }
+    return { id, channelId: id, channelName, isDM: !isGroup, metadata: {} };
+  }
+  async fetchChannelInfo(id: string) {
+    const info = await this.fetchThread(id);
+    return { id, name: info.channelName, isDM: info.isDM, metadata: info.metadata };
+  }
+  async fetchMessages(_id: string, _options?: FetchOptions) {
+    // WhatsApp keeps history on the phone; the linked device stores none.
+    return { messages: [] };
+  }
+  async getUser(userId: string) {
+    const id = userId.replace(/^whatsapp:/, "");
+    const name = this.names.get(id) ?? (id.startsWith("lid:") ? id : `+${id}`);
+    return { userId, userName: id, fullName: name, isBot: false };
+  }
+  async handleWebhook(): Promise<Response> {
+    return new Response("WhatsApp uses a linked-device socket, not webhooks", { status: 405 });
+  }
+  renderFormatted(content: FormattedContent): string {
+    return stringifyMarkdown(content);
+  }
+
+  async startTyping(id: string): Promise<void> {
+    if (!this.socket || !this.connected) return;
+    const { chatJid } = parseWhatsappThreadId(id);
+    const existing = this.typing.get(id);
+    if (existing) clearTimeout(existing);
+    await this.socket.sendPresenceUpdate("composing", chatJid).catch(() => undefined);
+    // WhatsApp drops "composing" after ~10s; refresh while the agent works.
+    const timer = setTimeout(() => {
+      this.typing.delete(id);
+      void this.startTyping(id);
+    }, 8_000);
+    timer.unref?.();
+    this.typing.set(id, timer);
+  }
+  async endTyping(id: string): Promise<void> {
+    const existing = this.typing.get(id);
+    if (existing) clearTimeout(existing);
+    this.typing.delete(id);
+    if (this.socket && this.connected) {
+      await this.socket.sendPresenceUpdate("paused", parseWhatsappThreadId(id).chatJid).catch(() => undefined);
+    }
+  }
+
+  async postMessage(id: string, message: AdapterPostableMessage) {
+    if (!this.socket || !this.connected) throw new WhatsappError("network", "WhatsApp is not connected");
+    const { chatJid } = parseWhatsappThreadId(id);
+    const parts = splitWhatsappText(markdownToWhatsapp(textOf(message)));
+    if (parts.length === 0) throw new Error("WhatsApp publication is empty");
+    let lastId = "";
+    for (const part of parts) {
+      const sent = await this.socket.sendMessage(chatJid, { text: part });
+      lastId = sent?.key.id ?? lastId;
+    }
+    await this.endTyping(id);
+    if (!lastId) throw new WhatsappError("network", "WhatsApp did not confirm the message");
+    const raw: WhatsappRaw = {
+      key: { id: lastId, remoteJid: chatJid },
+      senderId: this.botUserId,
+      pushName: this.userName,
+      text: parts.join("\n\n"),
+      isGroup: parseWhatsappThreadId(id).isGroup,
+      isMention: false,
+      timestamp: Math.floor(Date.now() / 1000),
+    };
+    return { id: lastId, threadId: id, raw };
+  }
+  async editMessage(): Promise<never> {
+    throw new Error("WhatsApp edits are not supported");
+  }
+  async deleteMessage(): Promise<void> {
+    /* Deleting sent messages is not supported. */
+  }
+  async addReaction(): Promise<void> {
+    /* Receipt reactions are not published on WhatsApp. */
+  }
+  async removeReaction(): Promise<void> {
+    /* No reactions. */
+  }
+}

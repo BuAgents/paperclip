@@ -34,7 +34,7 @@ function providerResourceType(
 ): string {
   if (isDirectMessage) return "direct_message";
   if (provider === "github") return "repository";
-  if (provider === "imessage-photon") return "group_chat";
+  if (provider === "imessage-photon" || provider === "whatsapp") return "group_chat"; // bu-fork: whatsapp
   if (provider === "discord") return "channel";
   if (provider === "microsoft-teams")
     return surfaceKind === "linear_group" ? "group_chat" : "channel";
@@ -119,7 +119,7 @@ function chatSurfaceKind(
 ): ChatSurfaceKind {
   if (provider === "slack" && slackThreadRootMessageId(thread.id)) return "native_thread";
   if (thread.isDM) return "direct_message";
-  if (provider === "imessage-photon") return "linear_group";
+  if (provider === "imessage-photon" || provider === "whatsapp") return "linear_group"; // bu-fork: whatsapp
   if (provider === "telegram") {
     return /^telegram:[^:]+:[^:]+$/.test(thread.id)
       ? "native_thread"

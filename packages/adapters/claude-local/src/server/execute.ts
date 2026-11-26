@@ -593,6 +593,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             { path: sharedClaudeConfigDir, access: "rw" },
             { path: path.join(path.dirname(sharedClaudeConfigDir), ".claude.json"), access: "rw" },
             { path: promptBundle.addDir, access: "ro" },
+            // bu-fork: the bundle's skills are symlinks to these.
+            ...mountableSkillEntries.map((entry) => ({ path: entry.source, access: "ro" as const })),
             { path: localMcpConfigDir, access: "ro" },
           ],
           extraPaths: parseLocalProcessSandboxExtraPaths(config.filesystemExtraPaths),
@@ -877,6 +879,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       args.push("--mcp-config", effectiveMcpConfigPath, "--strict-mcp-config");
     }
     args.push("--add-dir", effectivePromptBundleAddDir);
+    // bu-fork: managed runs ignore --add-dir skills (--setting-sources user); load them as a plugin.
+    if (config.managedAiConnection) args.push("--plugin-dir", effectivePromptBundleAddDir);
     if (extraArgs.length > 0) args.push(...extraArgs);
     return args;
   };

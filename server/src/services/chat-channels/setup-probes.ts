@@ -147,7 +147,7 @@ export function createSetupProbes(db: Db, options: SetupProbesOptions) {
             );
           }
           const requiredTrigger =
-            ["telegram", "imessage-photon"].includes(endpoint.provider)
+            ["telegram", "imessage-photon", "whatsapp"].includes(endpoint.provider)
               ? "direct_message"
               : "subscribed_message";
           const qualifyingDelivery = await db
@@ -174,7 +174,7 @@ export function createSetupProbes(db: Db, options: SetupProbesOptions) {
             !qualifyingDelivery.processedAt
           ) {
             throw conflict(
-              ["telegram", "imessage-photon"].includes(endpoint.provider)
+              ["telegram", "imessage-photon", "whatsapp"].includes(endpoint.provider)
                 ? "Send the test direct message before completing setup"
                 : "Reply once without mentioning the agent before completing setup",
               { code: "chat_test_follow_up_missing" },

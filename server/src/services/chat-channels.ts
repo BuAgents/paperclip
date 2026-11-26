@@ -1,7 +1,8 @@
 import { githubReviewCheckService } from "./chat-github-checks.js";
 import { createSlackCloudEventIngress } from "./chat-channels/slack/cloud-ingress.js";
 import { createSlackCloudEnrollment, stageSlackCloudEnrollmentIntent, registerSlackCloudEnrollmentOwner } from "./chat-channels/slack/cloud-enrollment.js";
-import { leasedChatProvider } from "./chat-channels/runtime/receiver-policy.js";
+import { leasedChatProvider, RECEIVER_LEASE_KEYS } from "./chat-channels/runtime/receiver-policy.js";
+import { createWhatsappRuntimeCallbacks, photonLikeConversation, whatsappConversationBindingIsComplete } from "./whatsapp/channel.js"; // bu-fork
 import { chatReceiverSchedule } from "./chat-channels/runtime/receiver-schedule.js";
 import { registerChatReceiverWork } from "./chat-channels/runtime/receiver-work.js";
 import { notifyChatRunMilestones } from "./chat-run-milestone-notifications.js";
@@ -261,6 +262,7 @@ const REQUIRED_CREDENTIALS: Record<
   discord: ["botToken", "applicationId", "guildId"],
   "microsoft-teams": ["clientId", "tenantId", "clientSecret"],
   telegram: ["botToken"],
+  whatsapp: ["authDir"], // bu-fork
 };
 
 const SUPPORTED_GITHUB_WEBHOOK_EVENTS = new Set<string>([
@@ -281,6 +283,7 @@ const SUPPLIED_CREDENTIAL_KEYS: Record<ChatProvider, readonly string[]> = {
   discord: ["botToken", "applicationId", "guildId"],
   "microsoft-teams": ["clientId", "tenantId", "clientSecret"],
   telegram: ["botToken"],
+  whatsapp: ["authDir"], // bu-fork
 };
 
 const MAX_ERROR_TEXT = 2_000;
@@ -582,6 +585,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     endpointRecord, processMessage,
     ingressOnly: (provider) => provider === "imessage-photon"
       ? PHOTON_MESSAGE_INGRESS_ONLY
+      : provider === "whatsapp" ? true // bu-fork: socket messages are staged like Photon's
       : options.deferWebhookProcessing === true,
   });
 
@@ -1048,6 +1052,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
               ...createPhotonRuntimeCallbacks(db, { endpointId: endpoint.id, connectionId: endpoint.connectionId, companyId: record.endpoint.companyId, assignedAgentId: record.endpoint.assignedAgentId, context, lineId: credentials.lineId, runtimeCallbackRecord, runtimeCallbackEndpoint, renewDiscordGatewayOwnershipForMessageAdmission }),
               onPhotonEvent: (event) => handlePhotonEvent(endpoint.id, event, context),
               onPhotonFailure: (error) => handlePhotonFailure(endpoint.id, error, context),
+              ...createWhatsappRuntimeCallbacks(db, { provider: record.endpoint.provider, endpointId: endpoint.id, context, runtimeCallbackEndpoint }), // bu-fork
               onDiscordRootMentionAdmission:
                 record.endpoint.provider === "discord"
                   ? (event) =>
@@ -1108,7 +1113,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           const stillRegistered = runtime.get(endpoint.id) === instance;
           const stillCurrent =
             latest !== null &&
-            (latest.endpoint.status === record.endpoint.status || record.endpoint.provider === "imessage-photon" && photonRuntimeStatusMayAdvance(record.endpoint, latest.endpoint)) &&
+            (latest.endpoint.status === record.endpoint.status || photonLikeConversation(record.endpoint.provider) /* bu-fork: whatsapp */ && photonRuntimeStatusMayAdvance(record.endpoint, latest.endpoint)) &&
             runtimeContextForRecord(latest).version === context.version;
           if (!stillRegistered || !stillCurrent) {
             if (stillRegistered) {
@@ -1197,7 +1202,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       )
       .where(
         and(
-          inArray(chatEndpoints.provider, ["discord", "imessage-photon"]),
+          inArray(chatEndpoints.provider, Object.keys(RECEIVER_LEASE_KEYS) as ChatProvider[]), // bu-fork: every leased receiver (adds whatsapp)
           inArray(chatEndpoints.status, ["verifying", "active", "attention"]),
           eq(toolConnections.status, "active"),
           eq(toolConnections.enabled, true),
@@ -1763,6 +1768,8 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
             : undefined,
           conversationIsComplete: endpoint.provider === "imessage-photon"
             ? (conversationId) => photonConversationBindingIsComplete(conversationId, hasCommittedTaskControlCompletion)
+            : endpoint.provider === "whatsapp" // bu-fork
+              ? (conversationId) => whatsappConversationBindingIsComplete(conversationId, hasCommittedTaskControlCompletion)
             : endpoint.provider === "slack" && thread.isDM && surfaceKind === "native_thread"
               ? async (conversationId, state) => state === "completed" && hasCommittedTaskControlCompletion(conversationId)
               : undefined,

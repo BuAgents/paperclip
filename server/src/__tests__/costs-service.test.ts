@@ -66,6 +66,7 @@ const mockHeartbeatService = vi.hoisted(() => ({
 }));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockFetchAllQuotaWindows = vi.hoisted(() => vi.fn());
+const mockReadCachedQuotaWindows = vi.hoisted(() => vi.fn()); // bu-fork
 const mockCostService = vi.hoisted(() => ({
   createEvent: vi.fn(),
   summary: vi.fn().mockResolvedValue({ spendCents: 0 }),
@@ -125,6 +126,9 @@ function registerModuleMocks() {
 
   vi.doMock("../services/quota-windows.js", () => ({
     fetchAllQuotaWindows: mockFetchAllQuotaWindows,
+  }));
+  vi.doMock("../services/bu-quota-windows-cache.js", () => ({
+    readCachedQuotaWindows: mockReadCachedQuotaWindows,
   }));
 }
 
@@ -208,6 +212,32 @@ describe("cost routes", () => {
       identifier: "PC1A2-1",
     });
     mockBudgetService.upsertPolicy.mockResolvedValue(undefined);
+  });
+
+  // bu-fork: agent-readable cached quota snapshot.
+  describe("GET /costs/quota-windows/cached", () => {
+    const agent = { type: "agent", agentId: "agent-1", companyId: "company-1", source: "agent_key" };
+    const snapshot = { asOf: "2026-11-25T00:00:00.000Z", results: [{ provider: "openai", ok: true, windows: [] }] };
+    it("serves the cached snapshot to an agent of the company without live calls", async () => {
+      mockReadCachedQuotaWindows.mockReturnValue(snapshot);
+      const res = await request(createAppWithActor(agent)).get("/api/companies/company-1/costs/quota-windows/cached");
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(snapshot);
+      expect(mockFetchAllQuotaWindows).not.toHaveBeenCalled();
+      expect(mockAccessService.decide).toHaveBeenCalledWith(expect.objectContaining({ action: "company_scope:read" }));
+    });
+    it("answers 503 before the first snapshot", async () => {
+      mockReadCachedQuotaWindows.mockReturnValue(null);
+      const res = await request(createAppWithActor(agent)).get("/api/companies/company-1/costs/quota-windows/cached");
+      expect(res.status).toBe(503);
+    });
+    it("refuses another company's agent and a denied read", async () => {
+      mockReadCachedQuotaWindows.mockReturnValue(snapshot);
+      expect((await request(createAppWithActor(agent)).get("/api/companies/company-2/costs/quota-windows/cached")).status).toBe(403);
+      mockAccessService.decide.mockResolvedValue({ allowed: false, explanation: "no" });
+      expect((await request(createAppWithActor(agent)).get("/api/companies/company-1/costs/quota-windows/cached")).status).toBe(403);
+      expect(mockReadCachedQuotaWindows).not.toHaveBeenCalled();
+    });
   });
 
   it("accepts valid ISO date strings", async () => {

@@ -3,6 +3,7 @@ import type { ChatProvider } from "@paperclipai/shared";
 export const RECEIVER_LEASE_KEYS = {
   discord: "discord_gateway_runtime",
   "imessage-photon": "photon_receiver_runtime",
+  whatsapp: "whatsapp_receiver_runtime", // bu-fork
 } as const satisfies Partial<Record<ChatProvider, string>>;
 
 export function receiverLeaseKey(provider: string) {

@@ -123,6 +123,7 @@ import {
 } from "@paperclipai/shared";
 import { evaluateCodexCredentialReadiness } from "@paperclipai/adapter-codex-local/server";
 import type { TrustPresetResolution } from "../trust-preset-resolver.js";
+import { loadPrincipalNames } from "../bu-principal-names.js";
 
 const EXTERNAL_ATTACHMENT_OMISSIONS_KEY = "externalAttachmentOmissions";
 
@@ -2374,6 +2375,11 @@ export async function buildPaperclipWakePayload(input: {
       ? redactQuarantinedBodyForHigherTrust(continuationSummary)
       : continuationSummary;
 
+  // bu-fork (BUD-1135): author display names, one lookup for all inline comments.
+  const authorNames = await loadPrincipalNames(input.db, input.companyId, {
+    userIds: commentRows.map((row) => row.authorUserId),
+    agentIds: commentRows.map((row) => row.authorAgentId),
+  });
   for (const commentId of commentIds) {
     const row = commentsById.get(commentId);
     if (!row) {
@@ -2427,9 +2433,9 @@ export async function buildPaperclipWakePayload(input: {
       sourceTrust: row.sourceTrust ?? null,
       createdAt: row.createdAt.toISOString(),
       author: row.authorAgentId
-        ? { type: "agent", id: row.authorAgentId }
+        ? { type: "agent", id: row.authorAgentId, name: authorNames.agentName(row.authorAgentId) }
         : row.authorUserId
-          ? { type: "user", id: row.authorUserId }
+          ? { type: "user", id: row.authorUserId, name: authorNames.userName(row.authorUserId) }
           : { type: "system", id: null },
     });
   }

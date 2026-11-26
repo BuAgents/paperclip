@@ -33,6 +33,7 @@ import {
 } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getAccessibleResource, getActorInfo } from "./authz.js";
 import { fetchCompanyQuotaWindows } from "../services/quota-windows.js";
+import { readCachedQuotaWindows } from "../services/bu-quota-windows-cache.js";
 import { badRequest, forbidden } from "../errors.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 
@@ -341,6 +342,22 @@ export function costRoutes(
     }
     const results = await fetchCompanyQuotaWindows(db, companyId, getActorInfo(req).actorId);
     res.json(results);
+  });
+
+  // bu-fork: agent-readable counterpart to the board-only route above. Serves the
+  // cached snapshot only (refreshed on read, see services/bu-quota-windows-cache.ts),
+  // so no request waits on live provider calls. Same read check as the other
+  // agent-readable cost routes (by-agent, by-project, …), not assertBoard.
+  router.get("/companies/:companyId/costs/quota-windows/cached", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    if (!(await assertCompanyCostReadAllowed(req, res, companyId))) return;
+    const cached = readCachedQuotaWindows();
+    if (!cached) {
+      res.status(503).json({ error: "Quota snapshot not available yet; try again shortly" });
+      return;
+    }
+    res.json(cached);
   });
 
   router.get("/companies/:companyId/budgets/overview", async (req, res) => {

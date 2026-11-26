@@ -30,3 +30,10 @@ export interface ProviderQuotaResult {
   error?: string;
   windows: QuotaWindow[];
 }
+
+/** Response of GET /companies/:companyId/costs/quota-windows/cached (bu-fork). */
+export interface CachedQuotaWindows {
+  /** ISO timestamp of when this snapshot was fetched from providers. */
+  asOf: string;
+  results: ProviderQuotaResult[];
+}

@@ -605,6 +605,19 @@ class CodexRpcClient {
     }
   }
 
+  /**
+   * bu-fork: live model catalog via the authenticated codex CLI session (ChatGPT
+   * login or API key, whichever codex itself is using) -- confirmed against the
+   * real app-server protocol schema (`codex app-server generate-json-schema`) as
+   * `model/list`, returning `{ data: Model[], nextCursor }`. Only reads the first
+   * page; that's already ~30+ models today, far more than we need for a picker.
+   */
+  async fetchModelList(): Promise<CodexRpcModel[]> {
+    const message = await this.request("model/list", {}, 15_000);
+    const result = message.result as { data?: unknown } | undefined;
+    return Array.isArray(result?.data) ? (result.data as CodexRpcModel[]) : [];
+  }
+
   async shutdown() {
     this.fail(new Error("codex app-server quota probe closed"));
     this.proc.stdin.end();
@@ -630,6 +643,32 @@ class CodexRpcClient {
       const timer = setTimeout(done, RPC_SHUTDOWN_GRACE_MS);
       this.proc.once("close", done);
     });
+  }
+}
+
+interface CodexRpcModel {
+  id: string;
+  displayName?: string;
+  hidden?: boolean;
+}
+
+/**
+ * bu-fork: live model list for the "Refresh models" button, used when the server has
+ * no OPENAI_API_KEY -- the common case, since codex_local's primary auth is the
+ * ChatGPT/device-login session this RPC call itself authenticates with. Visible models
+ * only (hidden ones are excluded from the default picker by design, per the protocol's
+ * own `includeHidden` doc).
+ */
+export async function fetchCodexRpcModels(): Promise<{ id: string; label: string }[]> {
+  const client = new CodexRpcClient();
+  try {
+    await client.initialize();
+    const models = await client.fetchModelList();
+    return models
+      .filter((m) => !m.hidden)
+      .map((m) => ({ id: m.id, label: m.displayName?.trim() || m.id }));
+  } finally {
+    await client.shutdown();
   }
 }
 

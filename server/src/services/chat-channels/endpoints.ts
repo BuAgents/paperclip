@@ -1,3 +1,4 @@
+import { whatsappSetupState } from "../whatsapp/channel.js"; // bu-fork
 import { notifyChatCompanyAuthorityChange } from "../chat-run-milestone-notifications.js";
 import { chatConnectionTransport } from "./provider-catalog.js";
 import type { ConnectionManagementContext } from "../connection-management.js";
@@ -93,6 +94,7 @@ function providerSetupState(
     case "speko":
       return { step, providerUrl: "https://platform.speko.ai/", webhookUrl } as const;
     case "imessage-photon": return { step, providerUrl: "https://photon.codes/", testStartedAt: endpoint.setup.testStartedAt } as const;
+    case "whatsapp": return whatsappSetupState(step, endpoint.setup.testStartedAt); // bu-fork
     case "agentmail": return endpoint.setup;
     case "slack": {
       return slackSetupState({ endpoint, webhookUrl, step, assignedAgentName });
@@ -358,7 +360,8 @@ function providerSetupState(
         // database created before the column default was hardened.
         requireAtMention: input.provider === "slack",
         allowGroupChats: !["microsoft-teams", "speko"].includes(input.provider),
-        allowUnlinkedPeople: !["slack", "imessage-photon", "speko"].includes(input.provider),
+        // bu-fork: WhatsApp answers only linked people.
+        allowUnlinkedPeople: !["slack", "imessage-photon", "speko", "whatsapp"].includes(input.provider),
         capabilities: CAPABILITIES[input.provider],
         setup: {
           step: "provider_setup",

@@ -104,6 +104,7 @@ import { proveRunProcessGone } from "../run-process-owner.js";
 import { LEGACY_HOST_FALLBACK_EVENT } from "../native-runtime/native-restart-recovery.js";
 import { releaseRuntimeServicesForRun } from "../workspace-runtime.js";
 import { isProcessGroupAlive } from "../local-service-supervisor.js";
+import { persistedProcessGraceSec, resolvePersistedRunProcess } from "./bu-persisted-process-target.js";
 import {
   findMissingHotRestartSnapshotRunIds,
   readHotRestartIntent,
@@ -1263,6 +1264,11 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
       const message = `Interrupted by graceful server shutdown (${signal})`;
       const running = runningProcesses.get(run.id);
       const control = run.runtimeMode === "legacy" ? adapterExecutionControls.get(run.id) : undefined;
+      // bu-fork (BUD-796): external adapter plugins leave no in-memory handle.
+      const persistedProcess = !running && !control
+        ? await resolvePersistedRunProcess(run, {
+            executing: activeRunExecutions.has(run.id), graceSec: persistedProcessGraceSec(agent) })
+        : null;
       if (control) await beginLegacyShutdownWorkspaceSettlement(db, run, settlementDeadline);
       try {
         if (run.runtimeMode === "native") {
@@ -1278,6 +1284,12 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
             pid: running.child.pid,
             processGroupId: running.processGroupId,
             graceMs: Math.max(1, running.graceSec) * 1000,
+          });
+        } else if (persistedProcess) {
+          await terminateHeartbeatRunProcess({
+            pid: persistedProcess.pid,
+            processGroupId: persistedProcess.processGroupId,
+            graceMs: Math.max(1, persistedProcess.graceSec) * 1000,
           });
         }
       } finally {

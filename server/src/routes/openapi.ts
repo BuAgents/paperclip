@@ -5912,6 +5912,16 @@ const costSummaryPaths = [
   "data-quality",
 ] as const;
 
+// bu-fork: agent-readable cached quota snapshot (routes/costs.ts).
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/costs/quota-windows/cached",
+  tags: ["costs"],
+  summary: "Last-known provider quota windows (no live provider calls; 503 until the first snapshot)",
+  request: { params: z.object({ companyId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
 for (const segment of costSummaryPaths) {
   registry.registerPath({
     method: "get",
@@ -11042,6 +11052,15 @@ registerCurrentRoute({
   summary: "List issue recovery actions",
 });
 
+// bu-fork: read-only "Automatic recovery stopped" diagnosis (routes/bu-recovery.ts).
+registerCurrentRoute({
+  method: "get",
+  path: "/api/issues/{id}/recovery-actions/{actionId}/diagnose",
+  tags: ["issues"],
+  summary: "Board only: prove a stopped run made no changes, and return the reconciliation to submit to recovery-actions/resolve",
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
 registerCurrentRoute({
   method: "post",
   path: "/api/issues/{id}/retry",
@@ -13322,4 +13341,15 @@ for (const [method, path, summary] of [
     400: r.badRequest, 401: r.unauthorized, 403: r.forbidden,
     404: r.notFound, 409: r.conflict, 422: r.unprocessable,
   },
+});
+
+// bu-fork: composer mic dictation (server/src/routes/bu-transcribe.ts).
+registry.registerPath({
+  method: "post", path: "/api/bu/transcribe", tags: ["bu"],
+  summary: "Transcribe a short board recording with the local Whisper transcriber",
+  description: "Board users with company membership only; agents are refused. Audio stays on the instance. One transcription runs at a time.",
+  request: { body: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["audio"],
+    properties: { audio: { type: "string", format: "binary", description: "webm, ogg, mp4, mpeg or wav recording, up to 25 MB." } } } } } } },
+  responses: { 200: r.ok(z.object({ text: z.string(), language: z.string().nullable(), durationSec: z.number().nullable() })),
+    400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 413: r.payloadTooLarge, 500: r.serverError },
 });

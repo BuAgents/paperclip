@@ -19,6 +19,8 @@ export interface ExecutionContinuationEnvelope {
     id: string;
     authorType: string;
     authorId: string | null;
+    /** bu-fork: display name of the author (user from the company directory, or agent); null when unknown. */
+    authorName?: string | null;
     /** Run-authored Local CLI comments retain user attribution but are not human direction. */
     createdByRunId?: string | null;
     body: string;
@@ -33,6 +35,8 @@ export interface ExecutionContinuationEnvelope {
     kind: string;
     status: string;
     resolvedByUserId: string;
+    /** bu-fork: display name from the company user directory; null when unknown or no longer a member. */
+    resolvedByUserName?: string | null;
     resolvedAt: string;
     result: unknown;
   }>;
@@ -40,6 +44,10 @@ export interface ExecutionContinuationEnvelope {
     id: string;
     kind: string;
     status: string;
+    /** bu-fork: who resolved it. A user resolver carries a name; an agent resolver never does. */
+    resolvedByUserId?: string | null;
+    resolvedByUserName?: string | null;
+    resolvedByAgentId?: string | null;
     result: unknown;
   }>;
   /** Only valid when resuming the provider session associated with this run. */
@@ -74,9 +82,12 @@ export interface ExecutionContinuationEnvelope {
   };
   unresolvedInteractionIds: string[];
   coverage: {
-    kind: "full_task_history" | "task_history_delta";
+    /** bu-fork: `truncated_task_history` = oldest messages dropped by the server's size budget. */
+    kind: "full_task_history" | "task_history_delta" | "truncated_task_history";
     baseRunId?: string;
     throughCommentId: string | null;
     summaryThroughCommentId: null;
+    /** bu-fork: number of oldest messages left out by the size budget. */
+    omittedMessageCount?: number;
   };
 }

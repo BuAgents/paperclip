@@ -45,6 +45,7 @@ export const CONNECTABLE_APP_SLUGS = new Set([
   "microsoft-teams",
   "telegram",
   "imessage-photon",
+  "whatsapp", // bu-fork
 ]);
 
 export const CONNECTABLE_APP_DEFINITIONS = APP_DEFINITIONS.filter((app) =>

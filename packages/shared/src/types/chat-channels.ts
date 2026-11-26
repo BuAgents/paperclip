@@ -15,6 +15,8 @@ export const CHAT_PROVIDERS = [
   "speko",
   "agentmail",
   "imessage-photon",
+  // bu-fork: WhatsApp (Baileys, linked device)
+  "whatsapp",
 ] as const;
 export type ChatProvider = (typeof CHAT_PROVIDERS)[number];
 

@@ -135,9 +135,14 @@ export function ProviderQuotaCard({
   );
   const isClaudeQuotaPanel = provider === "anthropic";
   const isCodexQuotaPanel = provider === "openai" && quotaSource?.startsWith("codex-");
-  const supportsSubscriptionQuota = provider === "anthropic" || provider === "openai";
+  // bu-fork: this used to hard-gate the whole section to anthropic/openai by name, so
+  // any other adapter that does implement getQuotaWindows() (or gets one added later --
+  // e.g. antigravity_local, zai_local) would fetch real windows and then never render
+  // them. The generic renderer below (the non-Claude/non-Codex branch) already handles
+  // an arbitrary QuotaWindow[] fine; gate on there being data (or an in-flight
+  // load/error) instead of an allow-list of provider names.
   const showSubscriptionQuotaSection =
-    supportsSubscriptionQuota && (quotaLoading || Boolean(quotaAccounts?.length) || quotaWindows.length > 0 || quotaError != null);
+    quotaLoading || Boolean(quotaAccounts?.length) || quotaWindows.length > 0 || quotaError != null;
 
   return (
     <Card>

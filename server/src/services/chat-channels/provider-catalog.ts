@@ -5,6 +5,7 @@ import type {
 
 const PROVIDER_LABELS: Record<ChatProvider, string> = {
   speko: "Speko",
+  whatsapp: "WhatsApp", // bu-fork
   "imessage-photon": "iMessage Photon",
   agentmail: "AgentMail",
   slack: "Slack",
@@ -15,6 +16,8 @@ const PROVIDER_LABELS: Record<ChatProvider, string> = {
 };
 
 const CAPABILITIES: Record<ChatProvider, ChatAdapterCapabilities> = {
+  // bu-fork: WhatsApp linked device — plain text, typing, no edits/files/cards.
+  whatsapp: { threads: false, directMessages: true, nativeStreaming: false, messageEdits: false, messageDeletes: false, reactions: false, files: false, cards: false, actions: false, modals: false, slashCommands: false, ephemeralMessages: false, proactiveDirectMessages: false },
   speko: { threads: false, directMessages: true, nativeStreaming: false, messageEdits: false, messageDeletes: false, reactions: false, files: false, cards: false, actions: false, modals: false, slashCommands: false, ephemeralMessages: false, proactiveDirectMessages: false },
   "imessage-photon": { threads: false, directMessages: true, nativeStreaming: false, messageEdits: true, messageDeletes: false, reactions: false, files: true, cards: false, actions: true, modals: false, slashCommands: false, ephemeralMessages: false, proactiveDirectMessages: false },
   agentmail: { threads: true, directMessages: true, nativeStreaming: false, messageEdits: false, messageDeletes: false, reactions: false, files: true, cards: false, actions: false, modals: false, slashCommands: false, ephemeralMessages: false, proactiveDirectMessages: true },

@@ -15,6 +15,7 @@ const providerNames: Record<ChatProvider, string> = {
   "microsoft-teams": "Microsoft Teams",
   telegram: "Telegram",
   "imessage-photon": "iMessage Photon",
+  whatsapp: "WhatsApp", // bu-fork
   agentmail: "AgentMail",
 };
 
