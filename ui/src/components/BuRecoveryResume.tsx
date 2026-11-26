@@ -57,7 +57,7 @@ export function BuRecoveryResume({ issueId, cacheRefs = [issueId], blocker, canR
         {resume.isPending ? "Checking…" : "Resume"}
       </Button>
       {message && <p role="status" className="w-full">{message}</p>}
-      {resume.isError && <p role="alert" className="w-full text-destructive">{describeError(resume.error).body}</p>}
+      {resume.error && <p role="alert" className="w-full text-destructive">{describeError(resume.error).body}</p>}
     </div>
   );
 }
